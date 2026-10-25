@@ -513,7 +513,8 @@
 			"scopes": {
 				"documents-read": "Read",
 				"documents-write": "Write",
-				"data-sources-read": "Data sources"
+				"data-sources-read": "Data sources",
+				"offline-access": "Stay connected"
 			},
 			"revoke": "Revoke",
 			"errors": {

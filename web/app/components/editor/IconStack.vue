@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { compareAsc } from "date-fns"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 
 export interface IconMetadata {
 	id: string

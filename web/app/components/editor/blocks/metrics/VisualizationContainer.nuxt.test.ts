@@ -1,22 +1,27 @@
 import { mountSuspended } from "@nuxt/test-utils/runtime"
-import type { VueWrapper } from "@vue/test-utils"
+import { flushPromises, type VueWrapper } from "@vue/test-utils"
 import { setResponseStatus } from "h3"
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import VisualizationContainer from "./VisualizationContainer.vue"
-import { stubChartColorContext } from "./test-helpers"
+import { stubChartColorContext, variableTree } from "./test-helpers"
 import {
 	defaultMetricConfig,
 	MetricSimulationPreset,
-	RefreshInterval,
-	TimeRangePreset,
 	type MetricConfig,
 } from "./utils"
+import { RefreshInterval, TimeRangePreset } from "~/utils/time-range"
 import {
 	clearQueryCache,
 	disposeMockEndpoints,
 	makeXid,
 	mockEndpoint,
+	seedQueryData,
 } from "~/composables/api/test-helpers"
+import { VARIABLE_QUERY_KEYS } from "~/composables/api/useVariableAPI"
+import {
+	METRIC_REFRESH_INTERVAL_REFERENCE,
+	METRIC_TIME_RANGE_REFERENCE,
+} from "~/utils/variable"
 import {
 	at,
 	findButtonByText,
@@ -28,6 +33,8 @@ const DATA_SOURCE_ID = makeXid("ds")
 const QUERY_URL = `/api/data-sources/${DATA_SOURCE_ID}/query`
 const DOCUMENT_ID = makeXid("doc")
 const BRANCH_ID = makeXid("branch")
+const PALETTE_RED = "oklch(57.7% 0.245 27.325)"
+const PALETTE_GREEN = "oklch(62.7% 0.194 149.214)"
 
 function simulationCheckURL(uid: string): string {
 	return `/api/documents/${DOCUMENT_ID}/branches/${BRANCH_ID}/blocks/${uid}/run`
@@ -99,6 +106,15 @@ function chartNames(wrapper: VueWrapper): string[] {
 describe("<VisualizationContainer>", { concurrent: false }, () => {
 	beforeEach(() => {
 		stubChartColorContext()
+		// happy-dom loads no stylesheet, so the palette has no values
+		document.documentElement.style.setProperty(
+			"--selectable-color-1",
+			PALETTE_RED,
+		)
+		document.documentElement.style.setProperty(
+			"--selectable-color-6",
+			PALETTE_GREEN,
+		)
 		clearQueryCache()
 		useEditorMeta().setEditable(true)
 		useEditorStore().setReviewableDiffActive(false)
@@ -107,7 +123,11 @@ describe("<VisualizationContainer>", { concurrent: false }, () => {
 		useEditorStore().activateMetricBlockConfig(null)
 	})
 
-	afterEach(disposeMockEndpoints)
+	afterEach(() => {
+		document.documentElement.style.removeProperty("--selectable-color-1")
+		document.documentElement.style.removeProperty("--selectable-color-6")
+		disposeMockEndpoints()
+	})
 
 	it("asks for a data source before anything else", async ({ expect }) => {
 		const wrapper = await mountContainer(
@@ -231,6 +251,54 @@ describe("<VisualizationContainer>", { concurrent: false }, () => {
 		expect(
 			wrapper.findComponent({ name: "LineChart" }).props("thresholds"),
 		).toEqual([{ value: 10, label: "warn", color: "#ff0000" }])
+	})
+
+	it("hands the chart a palette threshold colour as css", async ({
+		expect,
+	}) => {
+		mockEndpoint("GET", QUERY_URL, () => seriesResult())
+
+		const wrapper = await mountContainer(
+			metricConfig({
+				thresholds: [{ value: 10, label: "warn", color: "red" }],
+			}),
+		)
+
+		await vi.waitFor(() => {
+			expect(chartNames(wrapper)).toEqual(["LineChart"])
+		}, WAIT_FOR_OPTIONS)
+		expect(
+			wrapper.findComponent({ name: "LineChart" }).props("thresholds"),
+		).toEqual([{ value: 10, label: "warn", color: PALETTE_RED }])
+	})
+
+	it.for([
+		{
+			name: "a palette base colour as css",
+			input: "green",
+			expected: PALETTE_GREEN,
+		},
+		{
+			name: "a base colour saved as css as it is",
+			input: "#00ff00",
+			expected: "#00ff00",
+		},
+	])("hands the gauge $name", async ({ input, expected }, { expect }) => {
+		mockEndpoint("GET", QUERY_URL, () => seriesResult())
+
+		const wrapper = await mountContainer(
+			metricConfig({
+				visualizationType: GenericQueryChartType.Gauge,
+				baseThresholdColor: input,
+			}),
+		)
+
+		await vi.waitFor(() => {
+			expect(chartNames(wrapper)).toEqual(["GaugeChart"])
+		}, WAIT_FOR_OPTIONS)
+		expect(
+			wrapper.findComponent({ name: "GaugeChart" }).props("baseThresholdColor"),
+		).toBe(expected)
 	})
 
 	it("reports the error a single failing query returned", async ({
@@ -919,6 +987,114 @@ describe("<VisualizationContainer>", { concurrent: false }, () => {
 			await vi.waitFor(() => {
 				expect(chartNames(wrapper)).toEqual(["LineChart"])
 			}, WAIT_FOR_OPTIONS)
+		})
+	})
+
+	describe("variables", () => {
+		beforeEach(() => {
+			seedQueryData(VARIABLE_QUERY_KEYS.tree, variableTree())
+		})
+		afterEach(() => {
+			vi.useRealTimers()
+		})
+
+		it("queries the window of the built-in time range it follows", async ({
+			expect,
+		}) => {
+			const calls = mockEndpoint("GET", QUERY_URL, () => seriesResult())
+
+			await mountContainer(
+				metricConfig({ timeRange: METRIC_TIME_RANGE_REFERENCE }),
+			)
+
+			await vi.waitFor(() => {
+				expect(calls.length).toBeGreaterThan(0)
+			}, WAIT_FOR_OPTIONS)
+
+			const { from, to } = at(calls, 0).query as { from: string; to: string }
+
+			// the fixture's user picked the last 7 days over the default
+			expect(Date.parse(to) - Date.parse(from)).toBe(7 * 24 * 60 * 60 * 1000)
+		})
+
+		it("schedules its refresh by the built-in interval it follows", async ({
+			expect,
+		}) => {
+			vi.useFakeTimers({ toFake: ["Date"] })
+			const tree = variableTree()
+			const refresh = at(at(tree, 0).variables, 1)
+			refresh.value = at(refresh.options, 1).id
+			seedQueryData(VARIABLE_QUERY_KEYS.tree, tree)
+			mockEndpoint("GET", QUERY_URL, () => seriesResult())
+			const uid = nextUid()
+
+			const wrapper = await mountContainer(
+				metricConfig({ refreshInterval: METRIC_REFRESH_INTERVAL_REFERENCE }),
+				{ uid: uid },
+			)
+
+			await vi.waitFor(() => {
+				expect(wrapper.emitted("loading")).toEqual([[true], [false]])
+			}, WAIT_FOR_OPTIONS)
+
+			const start = Date.now()
+
+			// the user's value is one minute, where the fallback is five
+			vi.setSystemTime(start + 59_000)
+			expect(useEditorStore().isMetricBlockDueForRefresh(uid)).toBe(false)
+			vi.setSystemTime(start + 61_000)
+			expect(useEditorStore().isMetricBlockDueForRefresh(uid)).toBe(true)
+		})
+
+		it("queries again when a value its queries reference changes", async ({
+			expect,
+		}) => {
+			const calls = mockEndpoint("GET", QUERY_URL, () => seriesResult())
+
+			await mountContainer(
+				metricConfig({
+					queries: [
+						{ name: "Query 1", query: 'up{env="$env"}', legendFormat: "" },
+					],
+				}),
+			)
+
+			await vi.waitFor(() => {
+				expect(calls.length).toBeGreaterThan(0)
+			}, WAIT_FOR_OPTIONS)
+
+			const asked = calls.length
+			const tree = variableTree()
+			at(at(tree, 0).variables, 2).value = "staging"
+			seedQueryData(VARIABLE_QUERY_KEYS.tree, tree)
+
+			await vi.waitFor(() => {
+				expect(calls.length).toBeGreaterThan(asked)
+			}, WAIT_FOR_OPTIONS)
+			// the query goes out as written, with the value beside it for the
+			// server to substitute
+			expect(calls.at(-1)?.query.q).toBe('up{env="$env"}')
+			expect(calls.at(-1)?.query["var-env"]).toBe("staging")
+		})
+
+		it("keeps its answer when a value it does not reference changes", async ({
+			expect,
+		}) => {
+			const calls = mockEndpoint("GET", QUERY_URL, () => seriesResult())
+
+			const wrapper = await mountContainer(metricConfig())
+
+			await vi.waitFor(() => {
+				expect(wrapper.emitted("loading")).toEqual([[true], [false]])
+			}, WAIT_FOR_OPTIONS)
+
+			const asked = calls.length
+			const tree = variableTree()
+			at(at(tree, 0).variables, 2).value = "staging"
+			seedQueryData(VARIABLE_QUERY_KEYS.tree, tree)
+			await flushPromises()
+
+			expect(calls).toHaveLength(asked)
 		})
 	})
 })

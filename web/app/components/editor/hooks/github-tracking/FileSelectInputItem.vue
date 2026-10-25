@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import type { GitHubFileTreeItem } from "~/utils/api/github"
 
 const props = defineProps<{

@@ -18,7 +18,8 @@
 	"compilerOptions": {
 		"paths": {
 			"@/*": ["./app/*"],
-			"~/*": ["./app/*"]
+			"~/*": ["./app/*"],
+			"#layers/ui/*": ["./layers/ui/*"]
 		}
 	}
 }

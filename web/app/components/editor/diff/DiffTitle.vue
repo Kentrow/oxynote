@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { Editor, EditorContent } from "@tiptap/vue-3"
-import { cn } from "@/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import Document from "@tiptap/extension-document"
 import Paragraph from "@tiptap/extension-paragraph"
 import Text from "@tiptap/extension-text"

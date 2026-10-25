@@ -13,11 +13,11 @@
 				}
 			],
 			"unitType": "custom",
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -34,11 +34,11 @@
 				}
 			],
 			"unitType": "custom",
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -55,11 +55,11 @@
 				}
 			],
 			"unitType": "custom",
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -76,11 +76,11 @@
 				}
 			],
 			"unitType": "custom",
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -97,11 +97,11 @@
 				}
 			],
 			"unitType": "custom",
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -119,13 +119,13 @@
 			],
 			"decimals": 1,
 			"unitType": "percent0to100",
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
 			"axisBoundsMax": 100,
 			"axisBoundsMin": 0,
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "gauge_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -141,11 +141,11 @@
 					"legendFormat": "{{outcome}}"
 				}
 			],
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -161,11 +161,11 @@
 					"legendFormat": "{{excuse}}"
 				}
 			],
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -181,11 +181,11 @@
 					"legendFormat": "remove: {{removal_likelihood}}"
 				}
 			],
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -201,11 +201,11 @@
 					"legendFormat": "{{outcome}}"
 				}
 			],
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -222,11 +222,11 @@
 				}
 			],
 			"unitType": "days",
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -243,11 +243,11 @@
 				}
 			],
 			"unitType": "custom",
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -265,11 +265,11 @@
 			],
 			"decimals": 1,
 			"unitType": "minutes",
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -286,11 +286,11 @@
 				}
 			],
 			"unitType": "custom",
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	},
 	{
@@ -307,11 +307,11 @@
 				}
 			],
 			"unitType": "custom",
-			"timeRange": "last_3_hours",
+			"timeRange": "$metric_range",
 			"dataSourceId": "d6ffo789ra6s73aemr5g",
-			"refreshInterval": "30s",
+			"refreshInterval": "$metric_refresh",
 			"visualizationType": "line_chart",
-			"baseThresholdColor": "oklch(62.7% .194 149.214)"
+			"baseThresholdColor": "green"
 		}
 	}
 ]

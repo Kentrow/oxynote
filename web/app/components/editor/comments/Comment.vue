@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { EditorContent, useEditor } from "@tiptap/vue-3"
 import { CommentClass, CommentExtensions } from "./utils"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 
 const props = defineProps<{
 	content: Record<string, any>

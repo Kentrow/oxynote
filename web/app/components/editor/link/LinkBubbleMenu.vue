@@ -1,6 +1,7 @@
 <script lang="ts" setup>
 import type { Editor } from "@tiptap/core"
-import { TextSelection } from "@tiptap/pm/state"
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state"
+import type { EditorView } from "@tiptap/pm/view"
 import { getMarkRange } from "@tiptap/core"
 import Link from "@tiptap/extension-link"
 import { computePosition, flip, offset, shift } from "@floating-ui/dom"
@@ -9,6 +10,7 @@ import { COMMENT_MARK_NAME } from "../mark-names"
 const props = defineProps<{
 	editor: Editor
 	container: HTMLElement | null
+	readOnly?: boolean
 }>()
 
 const { isEditable } = useEditorMeta()
@@ -23,6 +25,8 @@ const currentLink = ref<{
 	text: string
 	from: number
 	to: number
+	// set when the diff view marks the target as changed
+	oldHref?: string
 } | null>(null)
 
 let hoverTimeout: ReturnType<typeof setTimeout> | null = null
@@ -31,6 +35,16 @@ const isHoveringPopover = ref(false)
 const popoverElem = useTemplateRef<HTMLDivElement>("link-bubble-popover")
 const referenceElem = ref<Element | null>(null)
 let isSyncingFromEditor = false
+
+// a plain click opens a link. ProseMirror skips drags, so link text stays
+// selectable.
+const openOnClickKey = new PluginKey("openLinkOnClick")
+const openOnClickPlugin = new Plugin({
+	key: openOnClickKey,
+	props: {
+		handleClick: (view, _pos, event) => openClickedLink(view, event),
+	},
+})
 
 function syncEditedLink() {
 	if (!isEditing.value || !currentLink.value) {
@@ -60,8 +74,11 @@ function syncEditedLink() {
 		return
 	}
 
-	// Get the link mark to extract the current href
-	const linkMark = $pos.marks().find((mark) => mark.type.name === Link.name)
+	// a link is not inclusive, so the marks at its end leave it out. A link
+	// one character long ends at from + 1, so read its first character.
+	const linkMark = state.doc
+		.nodeAt(range.from)
+		?.marks.find((mark) => mark.type === linkType)
 	if (!linkMark) {
 		// Link mark not found, cancel editing
 		cancelEdit()
@@ -147,6 +164,12 @@ function handleMouseEnter(event: MouseEvent) {
 		clearTimeout(hoverTimeout)
 	}
 
+	// leaving a touching link scheduled a close
+	if (closeTimeout) {
+		clearTimeout(closeTimeout)
+		closeTimeout = null
+	}
+
 	// Show popover after a short delay
 	hoverTimeout = setTimeout(() => {
 		const { state, view } = props.editor
@@ -188,6 +211,8 @@ function handleMouseEnter(event: MouseEvent) {
 			text,
 			from: range.from,
 			to: range.to,
+			oldHref:
+				target.querySelector<HTMLElement>("[data-old-href]")?.dataset.oldHref,
 		}
 
 		// Store reference element and show popover
@@ -266,7 +291,7 @@ function handleClickOutside(event?: MouseEvent) {
 
 	const target = event?.target as Node | null | undefined
 	if (!target || !popoverElem.value.contains(target)) {
-		cancelEdit()
+		closeEdit()
 	}
 }
 
@@ -277,10 +302,12 @@ onMounted(() => {
 
 	// Listen to editor updates to sync edit refs with current state
 	props.editor.on("update", syncEditedLink)
+	props.editor.registerPlugin(openOnClickPlugin)
 })
 
 onBeforeUnmount(() => {
 	props.editor.off("update", syncEditedLink)
+	props.editor.unregisterPlugin(openOnClickKey)
 	document.removeEventListener("mousedown", handleClickOutside)
 	if (hoverTimeout) {
 		clearTimeout(hoverTimeout)
@@ -315,6 +342,39 @@ function cancelEdit() {
 	document.removeEventListener("mousedown", handleClickOutside)
 }
 
+// closing leaves the fields, so it does what leaving them does. An empty
+// field removes the link. A click outside has already moved the focus, so
+// nothing here takes it back.
+function closeEdit() {
+	if (!isEditing.value || !currentLink.value) {
+		cancelEdit()
+		return
+	}
+
+	const { from, to } = currentLink.value
+
+	if (editLinkText.value === "" || editLinkUrl.value === "") {
+		props.editor.commands.command(({ tr, state }) => {
+			const linkType = state.schema.marks.link
+			if (!linkType) {
+				return false
+			}
+
+			tr.removeMark(from, to, linkType)
+			return true
+		})
+	} else {
+		void updateLink(editLinkText.value, withDefaultScheme(editLinkUrl.value))
+	}
+
+	cancelEdit()
+}
+
+// the scheme is added once the address is left, never while it is typed
+function addMissingScheme() {
+	editLinkUrl.value = withDefaultScheme(editLinkUrl.value)
+}
+
 function removeLink() {
 	if (!currentLink.value) {
 		return
@@ -325,6 +385,32 @@ function removeLink() {
 	props.editor.chain().focus().setTextSelection({ from, to }).unsetLink().run()
 
 	cancelEdit()
+}
+
+// shift-click extends the selection. A read-only editor follows links
+// itself, and a file block's anchor has its own handler.
+function openClickedLink(view: EditorView, event: MouseEvent): boolean {
+	const anchor = (event.target as Element).closest("a")
+	const href = anchor?.getAttribute("href")
+	const linkType = view.state.schema.marks.link
+	if (
+		event.button !== 0 ||
+		event.shiftKey ||
+		!view.editable ||
+		!anchor ||
+		!href ||
+		!linkType
+	) {
+		return false
+	}
+
+	const $pos = view.state.doc.resolve(view.posAtDOM(anchor, 0))
+	if (!getMarkRange($pos, linkType)) {
+		return false
+	}
+
+	openExternalLink(href)
+	return true
 }
 
 function openLink() {
@@ -343,8 +429,9 @@ async function updateLink(newText: string, newHref: string) {
 		return
 	}
 
-	if (newText === "") {
-		removeLink()
+	// the document keeps the old link while a field is empty. Filling it in
+	// again or closing the popover settles it.
+	if (newText === "" || newHref === "") {
 		return
 	}
 
@@ -388,13 +475,18 @@ async function updateLink(newText: string, newHref: string) {
 		}
 
 		tr.removeMark(from, newTo, linkType)
-		tr.addMark(from, newTo, linkType.create({ href: ensureHttps(newHref) }))
+		tr.addMark(from, newTo, linkType.create({ href: newHref }))
 		tr.setSelection(TextSelection.create(tr.doc, from, newTo))
 
 		return true
 	})
 
 	await nextTick()
+
+	// the popover closed while the update ran
+	if (!isEditing.value) {
+		return
+	}
 
 	// Recompute the new link range from the updated doc
 	const { state } = props.editor
@@ -509,7 +601,7 @@ function editSelection() {
 }
 
 onKeyStroke("Escape", () => {
-	cancelEdit()
+	closeEdit()
 })
 
 defineExpose({
@@ -548,7 +640,26 @@ defineExpose({
 								name="mingcute:earth-2-line"
 								class="size-4 text-muted-foreground"
 							/>
-							<span class="flex-1 truncate text-2sm text-muted-foreground">
+							<div
+								v-if="currentLink.oldHref"
+								class="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-2sm"
+							>
+								<span class="sr-only">{{ $t("editor.link.previous") }}</span>
+								<span
+									class="max-w-full truncate rounded-sm bg-diff-text-removed px-1 line-through"
+								>
+									{{ currentLink.oldHref }}
+								</span>
+								<span
+									class="max-w-full truncate rounded-sm bg-diff-text-added px-1"
+								>
+									{{ currentLink.href }}
+								</span>
+							</div>
+							<span
+								v-else
+								class="flex-1 truncate text-2sm text-muted-foreground"
+							>
 								{{ currentLink.href }}
 							</span>
 						</div>
@@ -563,7 +674,7 @@ defineExpose({
 								<Icon name="lucide:external-link" />
 							</ShadcnUiButton>
 							<ShadcnUiButton
-								v-if="isEditable"
+								v-if="isEditable && !props.readOnly"
 								size="icon-sm"
 								variant="ghost"
 								:title="$t('editor.link.edit')"
@@ -588,6 +699,8 @@ defineExpose({
 								class="h-[1.775rem] px-2 text-2sm md:text-2sm"
 								disable-focus-effect
 								type="url"
+								@blur="addMissingScheme"
+								@keydown.enter.prevent="closeEdit"
 							/>
 						</div>
 						<div class="flex flex-col gap-1">
@@ -602,6 +715,7 @@ defineExpose({
 								class="h-[1.775rem] px-2 text-2sm md:text-2sm"
 								disable-focus-effect
 								type="text"
+								@keydown.enter.prevent="closeEdit"
 							/>
 						</div>
 					</div>

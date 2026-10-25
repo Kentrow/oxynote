@@ -32,7 +32,7 @@ import {
 	WAIT_FOR_OPTIONS,
 } from "~/components/test-helpers"
 import CalendarInput from "~/components/CalendarInput.vue"
-import { Select } from "~/components/shadcn/ui/select"
+import { Select } from "#layers/ui/app/components/shadcn/ui/select"
 
 vi.mock("vue-sonner", () => ({
 	toast: { custom: vi.fn(), dismiss: vi.fn() },

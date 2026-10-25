@@ -1,12 +1,48 @@
 const PROMETHEUS_QUERY_KEYS = {
 	metadata: (dataSourceId: string) =>
 		["prometheus", dataSourceId, "metadata"] as const,
-	labels: (dataSourceId: string, timeRange: string, matchers: string) =>
-		["prometheus", dataSourceId, "labels", timeRange, matchers] as const,
-	labelValues: (dataSourceId: string, label: string, timeRange: string) =>
-		["prometheus", dataSourceId, "label-values", label, timeRange] as const,
-	series: (dataSourceId: string, matchers: string, timeRange: string) =>
-		["prometheus", dataSourceId, "series", matchers, timeRange] as const,
+	labels: (
+		dataSourceId: string,
+		timeRange: string,
+		matchers: string,
+		variableValues: Record<string, string>,
+	) =>
+		[
+			"prometheus",
+			dataSourceId,
+			"labels",
+			timeRange,
+			matchers,
+			variableValues,
+		] as const,
+	labelValues: (
+		dataSourceId: string,
+		label: string,
+		timeRange: string,
+		variableValues: Record<string, string>,
+	) =>
+		[
+			"prometheus",
+			dataSourceId,
+			"label-values",
+			label,
+			timeRange,
+			variableValues,
+		] as const,
+	series: (
+		dataSourceId: string,
+		matchers: string,
+		timeRange: string,
+		variableValues: Record<string, string>,
+	) =>
+		[
+			"prometheus",
+			dataSourceId,
+			"series",
+			matchers,
+			timeRange,
+			variableValues,
+		] as const,
 }
 
 export default function () {
@@ -53,6 +89,7 @@ export default function () {
 					toValue(dataSourceIdRef) || "",
 					toValue(paramsRef)?.timeRangeKey || "",
 					(toValue(paramsRef)?.matchers ?? []).join(","),
+					toValue(paramsRef)?.variableValues ?? {},
 				),
 			query: async () => {
 				const dataSourceId = toValue(dataSourceIdRef)
@@ -62,7 +99,10 @@ export default function () {
 					return null
 				}
 
-				const queryParams = new URLSearchParams(formatQueryTimeRange(params))
+				const queryParams = new URLSearchParams({
+					...formatQueryTimeRange(params),
+					...formatQueryVariableValues(params.variableValues),
+				})
 
 				for (const matcher of params.matchers) {
 					queryParams.append("matchers", matcher)
@@ -101,6 +141,7 @@ export default function () {
 					dataSourceId || "",
 					params?.label || "",
 					params?.timeRangeKey || "",
+					params?.variableValues ?? {},
 				)
 			},
 			query: async () => {
@@ -111,7 +152,10 @@ export default function () {
 					return null
 				}
 
-				const queryParams = new URLSearchParams(formatQueryTimeRange(params))
+				const queryParams = new URLSearchParams({
+					...formatQueryTimeRange(params),
+					...formatQueryVariableValues(params.variableValues),
+				})
 
 				if (params.matchers?.length) {
 					for (const matcher of params.matchers) {
@@ -162,6 +206,7 @@ export default function () {
 					dataSourceId || "",
 					params?.matchers.join(",") || "",
 					params?.timeRangeKey || "",
+					params?.variableValues ?? {},
 				)
 			},
 			query: async () => {
@@ -172,7 +217,10 @@ export default function () {
 					return null
 				}
 
-				const queryParams = new URLSearchParams(formatQueryTimeRange(params))
+				const queryParams = new URLSearchParams({
+					...formatQueryTimeRange(params),
+					...formatQueryVariableValues(params.variableValues),
+				})
 
 				for (const matcher of params.matchers) {
 					queryParams.append("matchers", matcher)

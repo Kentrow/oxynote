@@ -10,7 +10,7 @@ import {
 	runInApp,
 	seedQueryData,
 } from "~/composables/api/test-helpers"
-import { TooltipProvider } from "./shadcn/ui/tooltip"
+import { TooltipProvider } from "#layers/ui/app/components/shadcn/ui/tooltip"
 import SearchModal from "./SearchModal.vue"
 import {
 	at,

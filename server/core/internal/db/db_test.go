@@ -5,31 +5,43 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	sq "github.com/Masterminds/squirrel"
 	"github.com/dchest/uniuri"
+	"github.com/guregu/null/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 	"github.com/lann/builder"
 	"github.com/orlangure/gnomock"
 	pgDocker "github.com/orlangure/gnomock/preset/postgres"
 	"github.com/oxynote/oxynote/server/core/internal/tag"
+	"github.com/oxynote/oxynote/server/core/internal/variable"
 	"github.com/oxynote/oxynote/server/core/pkg/cryptoutil"
 	"github.com/oxynote/oxynote/server/core/pkg/errutil"
 	"github.com/oxynote/oxynote/server/core/pkg/ioutil"
 	"github.com/oxynote/oxynote/server/core/pkg/metricutil"
+	"github.com/oxynote/oxynote/server/core/pkg/testutil"
+	"github.com/rs/xid"
+	migr "github.com/rubenv/sql-migrate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
-var _pgDSN string
+var (
+	_pgDSN string
+
+	// _pgContainerID is the Docker ID of the test Postgres container.
+	_pgContainerID string
+)
 
 const (
 	_pgUser string = "pgtest"
@@ -64,6 +76,7 @@ func TestMain(m *testing.M) {
 			_pgUser,
 			_pgPass,
 		),
+		pgDocker.WithVersion("18.6-alpine"),
 	))
 	if err != nil {
 		panic("cannot set up: " + err.Error())
@@ -77,6 +90,7 @@ func TestMain(m *testing.M) {
 	}()
 
 	_pgDSN = container.Host + ":" + strconv.Itoa(container.DefaultPort())
+	_pgContainerID = container.DockerID()
 
 	goleak.VerifyTestMain(m, goleak.IgnoreCurrent())
 }
@@ -198,7 +212,7 @@ func Test_DetectError(t *testing.T) {
 			existing := prepTags(t, db, 1, nil)[0]
 
 			dup := tag.NewTag(
-				tag.CreateInput{TagName: existing.TagName, Color: "#000000"},
+				tag.CreateInput{TagName: existing.TagName, Color: "green"},
 				existing.OrganizationID,
 				prepUsers(t, db, 1)[0],
 			)
@@ -209,6 +223,24 @@ func Test_DetectError(t *testing.T) {
 			return tcase{
 				Err:    err,
 				Result: tag.ErrDuplicateTagName,
+			}
+		},
+		"Duplicate variable group name": func(*testing.T) tcase {
+			return tcase{
+				Err:    &pgconn.PgError{Code: "23505", ConstraintName: "personal_variable_groups_fk_organization_id_group_name_key"},
+				Result: variable.ErrDuplicateGroupName,
+			}
+		},
+		"Duplicate variable key": func(*testing.T) tcase {
+			return tcase{
+				Err:    &pgconn.PgError{Code: "23505", ConstraintName: "personal_variables_fk_organization_id_variable_key_key"},
+				Result: variable.ErrDuplicateKey,
+			}
+		},
+		"Unmatched foreign key": func(*testing.T) tcase {
+			return tcase{
+				Err:    &pgconn.PgError{Code: "23503", ConstraintName: "tags_fk_organization_id_fkey"},
+				Result: &pgconn.PgError{Code: "23503", ConstraintName: "tags_fk_organization_id_fkey"},
 			}
 		},
 	}
@@ -224,51 +256,156 @@ func Test_DetectError(t *testing.T) {
 	}
 }
 
-func Test_DB_BeginTx(t *testing.T) {
+func Test_DB_migrateUp(t *testing.T) {
 	db := prepTempDB(t)
 
-	// provided destination isn't a pointer
-	require.PanicsWithValue(
-		t,
-		"dest is not a pointer",
-		func() {
-			require.NoError(t, db.BeginTx(context.Background(), struct{}{}))
-		},
-	)
+	organizationID := prepOrganizations(t, db, 1)[0]
 
-	// provided destination is nil
-	require.PanicsWithValue(
-		t,
-		"dest is not a pointer",
-		func() {
-			require.NoError(t, db.BeginTx(context.Background(), (*struct{})(nil)))
-		},
-	)
+	// rolling back to before the variables migration (008) and up again
+	// runs its backfill over an organization that existed before it, and
+	// the palette name migration (010) over tags stored as hex.
+	fsys, err := fs.Sub(_migrations, "migrations")
+	require.NoError(t, err)
 
-	// cannot fulfill destination requirements
-	require.Panics(
-		t,
-		func() {
-			require.NoError(t, db.BeginTx(context.Background(), &struct{}{}))
-		},
+	_, err = db.migrations.ExecVersion(
+		db.sql.DB,
+		"postgres",
+		&migr.HttpFileSystemMigrationSource{FileSystem: http.FS(fsys)},
+		migr.Down,
+		7,
 	)
+	require.NoError(t, err)
 
+	hexes := []string{"#f54a00", "#e7010c", "#155DFC", "rgb(1, 2, 3)"}
+
+	prepTags(t, db, len(hexes), func(i int, tg *tag.Tag) {
+		tg.OrganizationID = organizationID
+		tg.Color = hexes[i]
+	})
+
+	require.NoError(t, db.migrateUp())
+
+	tags, err := db.FetchTagTree(context.Background(), organizationID, "")
+	require.NoError(t, err)
+
+	colors := make([]string, 0, len(tags))
+
+	for _, s := range tags {
+		colors = append(colors, s.Color)
+	}
+
+	assert.Equal(t, []string{"orange", "red", "blue", "green"}, colors)
+
+	tree, err := db.FetchVariableTree(context.Background(), organizationID, "")
+	require.NoError(t, err)
+	require.Len(t, tree, 1)
+	require.Len(t, tree[0].Variables, 2)
+
+	exp := variable.SeedBuiltins(organizationID)
+
+	// option ids are random on both sides, so the list default is checked
+	// against each side's own first option and then set aside.
+	for _, g := range []variable.GroupTree{exp, tree[0]} {
+		refresh := g.Variables[1]
+		assert.Equal(t, null.StringFrom(refresh.Options[0].ID.String()), refresh.DefaultValue)
+
+		g.Variables[1].DefaultValue = null.String{}
+	}
+
+	testutil.AssertFilterEqual(t, exp, tree[0], xid.ID{}, time.Time{})
+}
+
+func Test_DB_BeginTx(t *testing.T) {
 	type test2 interface {
 		Commit() error
 	}
 
-	var val test2
+	cc := map[string]struct {
+		CancelledContext bool
+		Dest             any
+		Panics           bool
+		PanicValue       any
+		Err              error
+	}{
+		"Destination is not a pointer": {
+			Dest:       struct{}{},
+			Panics:     true,
+			PanicValue: "dest is not a pointer",
+		},
+		"Destination is nil": {
+			Dest:       (*struct{})(nil),
+			Panics:     true,
+			PanicValue: "dest is not a pointer",
+		},
+		"Destination cannot hold a transaction": {
+			Dest:   &struct{}{},
+			Panics: true,
+		},
+		"Cancelled context": {
+			CancelledContext: true,
+			Dest:             new(test2),
+			Err:              assert.AnError,
+		},
+		"Successful begin": {
+			Dest: new(test2),
+		},
+	}
 
-	// context error
-	nctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	for cn, c := range cc {
+		t.Run(cn, func(t *testing.T) {
+			t.Parallel()
 
-	require.Error(t, db.BeginTx(nctx, &val))
+			db := prepTempDB(t)
 
-	// success
-	require.NoError(t, db.BeginTx(context.Background(), &val))
-	assert.IsType(t, &Tx{}, val)
-	assert.NoError(t, val.Commit())
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			if c.CancelledContext {
+				cancel()
+			}
+
+			if c.Panics {
+				if c.PanicValue == nil {
+					require.Panics(t, func() {
+						require.NoError(t, db.BeginTx(ctx, c.Dest))
+					})
+
+					return
+				}
+
+				require.PanicsWithValue(t, c.PanicValue, func() {
+					require.NoError(t, db.BeginTx(ctx, c.Dest))
+				})
+
+				return
+			}
+
+			err := db.BeginTx(ctx, c.Dest)
+			testutil.RequireEqualError(t, c.Err, err)
+
+			if err != nil {
+				return
+			}
+
+			val := *c.Dest.(*test2)
+			assert.IsType(t, &Tx{}, val)
+			assert.NoError(t, val.Commit())
+		})
+	}
+}
+
+func Test_Tx_SQLTx(t *testing.T) {
+	db := prepTempDB(t)
+
+	var ntx *Tx
+
+	require.NoError(t, db.BeginTx(context.Background(), &ntx))
+
+	defer ntx.Rollback() //nolint:errcheck // error provides no meaningful info
+
+	stx := ntx.SQLTx()
+	require.NotNil(t, stx)
+	assert.Same(t, ntx.sql.Tx, stx)
 }
 
 func Test_Tx_Commit(t *testing.T) {

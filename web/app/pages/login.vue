@@ -3,10 +3,10 @@ import { toTypedSchema } from "@vee-validate/zod"
 import { useForm } from "vee-validate"
 import * as z from "zod"
 // for some reason this isn't auto imported
-import { FormField as ShadcnUiFormField } from "@/components/shadcn/ui/form"
+import { FormField as ShadcnUiFormField } from "#layers/ui/app/components/shadcn/ui/form"
 import { nextUrlWithHash, postAuthDocumentUrl } from "#imports"
 import { showToastMessage } from "~/components/toast"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 
 definePageMeta({
 	name: "login",

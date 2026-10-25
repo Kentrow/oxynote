@@ -6,8 +6,8 @@ import {
 	offset,
 	shift,
 } from "@floating-ui/dom"
-import { buttonVariants } from "~/components/shadcn/ui/button"
-import { cn } from "~/lib/utils"
+import { buttonVariants } from "#layers/ui/app/components/shadcn/ui/button"
+import { cn } from "#layers/ui/app/lib/utils"
 
 // With defineAsyncComponent, Vue doesn't load the actual module until it's
 // time to render—and since <ClientOnly> prevents that render on the server,

@@ -23,9 +23,10 @@ import {
 	closeCompletion,
 } from "@codemirror/autocomplete"
 import { tags } from "@lezer/highlight"
-import { cn } from "~/lib/utils"
-import type { TimeRangePreset } from "../../utils"
+import { cn } from "#layers/ui/app/lib/utils"
+import type { TimeRangePreset } from "~/utils/time-range"
 import { DiffStatus } from "~/components/editor/diff/position-map"
+import { useMetricVariables } from "../../variables"
 
 const props = defineProps<{
 	diffStatus?: DiffStatus | null
@@ -39,11 +40,13 @@ const { isDark } = useAppearance()
 const { isEditable } = useEditorMeta()
 const editorStore = useEditorStore()
 const legendEditorElem = useTemplateRef("legend-editor")
+const { variables } = useMetricVariables()
 const { fetchAllLabelNames, fetchExampleLabelValues } =
 	useLegendEditorExtension(
 		() => props.query,
 		() => props.dataSourceId,
 		() => props.timeRange,
+		variables,
 	)
 
 const legendFormatLanguage = StreamLanguage.define<{ inBraces: boolean }>({

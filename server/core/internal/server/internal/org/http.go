@@ -18,6 +18,7 @@ import (
 	"github.com/oxynote/oxynote/server/core/internal/server/internal/auth"
 	"github.com/oxynote/oxynote/server/core/internal/storage"
 	"github.com/oxynote/oxynote/server/core/internal/tag"
+	"github.com/oxynote/oxynote/server/core/internal/variable"
 	"github.com/oxynote/oxynote/server/core/pkg/errutil"
 	"github.com/oxynote/oxynote/server/core/pkg/httpserver"
 	"github.com/oxynote/oxynote/server/core/pkg/sqlutil"
@@ -34,7 +35,7 @@ type Handler struct {
 	storer          Storer
 	githubMan       *github.Manager
 	webchangeClient *webchange.Client
-	searchTrigger   SearchTrigger
+	searchQueue     SearchQueue
 	publicURL       string
 }
 
@@ -46,7 +47,7 @@ func NewHandler(
 	storer Storer,
 	githubMan *github.Manager,
 	webchangeClient *webchange.Client,
-	searchTrigger SearchTrigger,
+	searchQueue SearchQueue,
 	publicURL string,
 ) *Handler {
 	return &Handler{
@@ -55,7 +56,7 @@ func NewHandler(
 		storer:          storer,
 		githubMan:       githubMan,
 		webchangeClient: webchangeClient,
-		searchTrigger:   searchTrigger,
+		searchQueue:     searchQueue,
 		publicURL:       publicURL,
 	}
 }
@@ -142,7 +143,21 @@ func (h *Handler) InitializeOrganization(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err = tx.InsertSearchJob(r.Context(), search.BranchScope(id, doc.ID, doc.BranchID)); err != nil {
+	builtins := variable.SeedBuiltins(id)
+
+	if err = tx.CreateVariableGroup(r.Context(), builtins.Group); err != nil {
+		httpserver.RespondError(h.log, w, err)
+		return
+	}
+
+	for _, v := range builtins.Variables {
+		if err = tx.CreateVariable(r.Context(), v.Variable); err != nil {
+			httpserver.RespondError(h.log, w, err)
+			return
+		}
+	}
+
+	if err = h.searchQueue.Enqueue(r.Context(), tx, search.BranchScope(id, doc.ID, doc.BranchID)); err != nil {
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
@@ -152,8 +167,6 @@ func (h *Handler) InitializeOrganization(w http.ResponseWriter, r *http.Request)
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
-
-	h.searchTrigger.Trigger()
 
 	httpserver.Respond(
 		h.log,
@@ -291,7 +304,7 @@ func (h *Handler) TeardownOrganization(w http.ResponseWriter, r *http.Request) {
 
 	defer tx.Rollback() //nolint:errcheck // error provides no meaningful info
 
-	if err = tx.InsertSearchJob(r.Context(), search.OrganizationScope(id)); err != nil {
+	if err = h.searchQueue.Enqueue(r.Context(), tx, search.OrganizationScope(id)); err != nil {
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
@@ -311,8 +324,6 @@ func (h *Handler) TeardownOrganization(w http.ResponseWriter, r *http.Request) {
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
-
-	h.searchTrigger.Trigger()
 
 	// the logo is the organization's own object; the documents' files are
 	// left to the file manager, which reclaims them once the cascade nulls
@@ -344,12 +355,13 @@ type DB interface {
 	DBAgent
 }
 
-// SearchTrigger runs the search-job worker once a job has committed.
+// SearchQueue queues search jobs.
 //
-//go:generate ../../../../scripts/codegen/mock -t internal SearchTrigger search_trigger
-type SearchTrigger interface {
-	// Trigger should run a search-job pass right away.
-	Trigger()
+//go:generate ../../../../scripts/codegen/mock -t internal SearchQueue search_queue
+type SearchQueue interface {
+	// Enqueue should queue the job on the transaction, to run once it
+	// commits.
+	Enqueue(ctx context.Context, tx sqlutil.Tx, j search.Job) error
 }
 
 // Tx is an interface that combines sqlutil.Tx and DBAgent.
@@ -362,16 +374,13 @@ type Tx interface {
 
 // DBAgent is an interface that handles communication with the document database.
 type DBAgent interface {
-	TagsDBAgent
+	SeedDBAgent
 
 	// InsertDataSource inserts a data source into the database.
 	InsertDataSource(ctx context.Context, ds *datasource.DataSource) error
 
 	// InsertDocument should insert the document.
 	InsertDocument(ctx context.Context, doc document.Document) error
-
-	// InsertSearchJob should queue the search job's scope.
-	InsertSearchJob(ctx context.Context, job search.Job) error
 
 	// FetchDocumentHooksByOrganizationID should return every hook of the
 	// organization.
@@ -395,14 +404,22 @@ type DBAgent interface {
 	UpsertDocumentMaintainers(ctx context.Context, documentID xid.ID, organizationID string, maintainerIDs []string) error
 }
 
-// TagsDBAgent is an interface that handles communication with the tag
-// database, covering what seeding an organization needs.
-type TagsDBAgent interface {
+// SeedDBAgent is an interface that handles communication with the tag and
+// variable database, covering what seeding an organization needs.
+type SeedDBAgent interface {
 	// InsertTag should store a new tag at the end of its organization's tags.
 	InsertTag(ctx context.Context, t tag.Tag) error
 
 	// AssignBranchTag should make a document's branch carry a tag.
 	AssignBranchTag(ctx context.Context, organizationID string, documentID, branchID, tagID xid.ID) error
+
+	// CreateVariableGroup should store a new group at the end of its
+	// organization's groups.
+	CreateVariableGroup(ctx context.Context, g variable.Group) error
+
+	// CreateVariable should store a new variable at the end of its group,
+	// with its options.
+	CreateVariable(ctx context.Context, v variable.Variable) error
 }
 
 // Storer is an interface that defines methods for uploading and retrieving objects.

@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 
@@ -26,7 +25,8 @@ type listTags struct{}
 func (listTags) Info() Info {
 	return Info{
 		Name:        NameListTags,
-		Description: "List the organisation's tags in sidebar order as [{id, name, color, hidden, documents}]. color is a palette name, or unknown for a colour outside the palette that update_tag can fix. documents are the documents whose default branch carries the tag; a tag on another branch shows only on get_document for that branch. hidden is whether the current user keeps the tag out of their sidebar, and does not stop it being assigned.",
+		Traits:      Traits{Group: GroupTags},
+		Description: "List the organisation's tags in sidebar order as [{id, name, color, documents}]. Documents are the documents whose default branch carries the tag; a tag on another branch shows only on get_document for that branch.",
 		Properties:  map[string]any{},
 	}
 }
@@ -50,8 +50,7 @@ func (listTags) Execute(inp *input) (string, error) {
 		e := tagEntry{
 			ID:        s.ID,
 			Name:      s.TagName,
-			ColorName: cmp.Or(tag.ColorName(s.Color), "unknown"),
-			Hidden:    s.Hidden,
+			ColorName: s.Color,
 			Documents: make([]tagDocument, 0, len(s.Documents)),
 		}
 
@@ -85,14 +84,8 @@ type tagEntry struct {
 	// Name is the tag's display name.
 	Name string `json:"name"`
 
-	// ColorName is the palette name of the tag's colour, or "unknown" for
-	// one stored outside the palette: before the palette existed, or by
-	// another browser's rounding of a shade.
+	// ColorName is the palette name of the tag's colour.
 	ColorName string `json:"color"`
-
-	// Hidden indicates the current user keeps the tag out of their own
-	// sidebar.
-	Hidden bool `json:"hidden"`
 
 	// Documents is every document whose default branch carries the tag.
 	Documents []tagDocument `json:"documents"`
@@ -132,11 +125,9 @@ func (a createTagArgs) Validate() error {
 	return a.input().Validate()
 }
 
-// input returns the arguments as the domain's create input. A colour
-// outside the palette maps to no colour, which the input's Validate
-// refuses.
+// input returns the arguments as the domain's create input.
 func (a createTagArgs) input() tag.CreateInput {
-	return tag.CreateInput{TagName: a.Name, Color: tag.ColorHex(a.ColorName)}
+	return tag.CreateInput{TagName: a.Name, Color: a.ColorName}
 }
 
 // createTag creates a new tag in the organisation.
@@ -146,7 +137,7 @@ type createTag struct{}
 func (createTag) Info() Info {
 	return Info{
 		Name:        NameCreateTag,
-		Traits:      Traits{Write: true},
+		Traits:      Traits{Group: GroupTags, Write: true},
 		Description: "Create a tag and return {tag_id}. The name has to be unused in the organisation. The tag lands last in the sidebar order; update_tag moves it and set_tag_assignment puts it on a document.",
 		Properties: map[string]any{
 			"name":  map[string]any{"type": "string", "description": "The display name."},
@@ -234,8 +225,7 @@ func (a updateTagArgs) renames() bool {
 }
 
 // input returns the arguments as the domain's update input, with only
-// the fields that were given set. A colour outside the palette maps to
-// no colour, which the input's Validate refuses.
+// the fields that were given set.
 func (a updateTagArgs) input() tag.UpdateInput {
 	var inp tag.UpdateInput
 
@@ -244,7 +234,7 @@ func (a updateTagArgs) input() tag.UpdateInput {
 	}
 
 	if a.ColorName != "" {
-		inp.Color = null.StringFrom(tag.ColorHex(a.ColorName))
+		inp.Color = null.StringFrom(a.ColorName)
 	}
 
 	return inp
@@ -277,7 +267,7 @@ type updateTag struct{}
 func (updateTag) Info() Info {
 	return Info{
 		Name:        NameUpdateTag,
-		Traits:      Traits{Write: true},
+		Traits:      Traits{Group: GroupTags, Write: true, Idempotent: true},
 		Description: "Rename, recolour or move a tag in the sidebar order; give only what changes, and a call changing nothing is refused. A new name has to be unused in the organisation. Returns {tag_id} with what changed. set_tag_assignment changes which documents carry it.",
 		Properties: map[string]any{
 			"tag_id":     map[string]any{"type": "string", "description": _tagIDDescription},
@@ -388,7 +378,7 @@ type deleteTag struct{}
 func (deleteTag) Info() Info {
 	return Info{
 		Name:        NameDeleteTag,
-		Traits:      Traits{Write: true, Destructive: true},
+		Traits:      Traits{Group: GroupTags, Write: true, Destructive: true},
 		Description: "Delete a tag. Every document loses it, on every branch, and it cannot be restored; set_tag_assignment takes it off one document instead. Returns {tag_id, deleted}.",
 		Properties: map[string]any{
 			"tag_id": map[string]any{"type": "string", "description": _tagIDDescription},
@@ -488,11 +478,11 @@ type setTagAssignment struct{}
 func (setTagAssignment) Info() Info {
 	return Info{
 		Name:        NameSetTagAssignment,
-		Traits:      Traits{Write: true},
+		Traits:      Traits{Group: GroupTags, Write: true, Idempotent: true},
 		Description: "Put a tag on one branch of a document, or take it off. The document is listed under the tag in the sidebar while its default branch carries it. Setting what is already the case succeeds and changes nothing; delete_tag removes a tag everywhere. Returns {document_id, branch_id, tag_id, assigned}.",
 		Properties: map[string]any{
 			"document_id": map[string]any{"type": "string", "description": _documentIDDescription},
-			"branch_id":   map[string]any{"type": "string", "description": _branchIDDescription},
+			"branch_id":   map[string]any{"type": "string", "description": _writeBranchIDDescription},
 			"tag_id":      map[string]any{"type": "string", "description": _tagIDDescription},
 			"assigned":    map[string]any{"type": "boolean", "description": "true puts the tag on the branch, false takes it off."},
 		},

@@ -1,5 +1,8 @@
 import { describe, it } from "vitest"
-import { formatQueryTimeRange } from "./generic-query"
+import {
+	formatQueryTimeRange,
+	formatQueryVariableValues,
+} from "./generic-query"
 
 describe("formatQueryTimeRange", () => {
 	it.for([
@@ -36,5 +39,22 @@ describe("formatQueryTimeRange", () => {
 		},
 	])("$name", ({ timeRange, expected }, { expect }) => {
 		expect(formatQueryTimeRange(timeRange)).toEqual(expected)
+	})
+})
+
+describe("formatQueryVariableValues", () => {
+	it.for([
+		{
+			name: "returns no params without values",
+			values: undefined,
+			expected: {},
+		},
+		{
+			name: "prefixes each key with var-",
+			values: { env: "prod", step: "" },
+			expected: { "var-env": "prod", "var-step": "" },
+		},
+	])("$name", ({ values, expected }, { expect }) => {
+		expect(formatQueryVariableValues(values)).toEqual(expected)
 	})
 })

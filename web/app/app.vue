@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Toaster } from "@/components/shadcn/ui/sonner"
+import { Toaster } from "#layers/ui/app/components/shadcn/ui/sonner"
 
 const { color } = useAppearance() // used for side effects
 </script>

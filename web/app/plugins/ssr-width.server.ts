@@ -1,5 +1,5 @@
 import { provideSSRWidth } from "@vueuse/core"
-import { SIDEBAR_MOBILE_BREAKPOINT } from "~/components/shadcn/ui/sidebar/constants"
+import { SIDEBAR_MOBILE_BREAKPOINT } from "#layers/ui/app/components/shadcn/ui/sidebar/constants"
 
 // needed by shadcn-nuxt. must exceed the sidebar's mobile breakpoint so the
 // desktop sidebar shell renders during SSR instead of the mobile sheet.

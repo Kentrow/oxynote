@@ -9,18 +9,24 @@ import {
 	type SidebarItemLocationUpdate,
 } from "./sidebar"
 import SidebarNestedGroup from "./SidebarNestedGroup.vue"
+import TagEditMenu from "./TagEditMenu.vue"
 import { showToastMessage } from "./toast"
-import { useSidebar } from "./shadcn/ui/sidebar"
+import { useSidebar } from "#layers/ui/app/components/shadcn/ui/sidebar"
 
 const props = defineProps<{
 	allInitialSectionsLoaded: boolean
 	notificationSidebarOpen: boolean
+	variableSidebarOpen?: boolean
+	variableEditing?: boolean
+	variableUsage?: { usedOnCurrentPage: number; total: number }
 }>()
 const emit = defineEmits<{
 	(
 		e:
 			| "initial-load-complete"
 			| "toggle-notifications"
+			| "toggle-variables"
+			| "toggle-search"
 			| "toggle-shortcuts"
 			| "toggle-settings",
 	): void
@@ -36,6 +42,7 @@ const { osType } = useDetectHost()
 const { fetchDocumentTree, updateDocumentTree } = useDocumentAPI()
 const { fetchTagTree, updateTagTree, updateTagVisibility, unassignBranchTag } =
 	useTagAPI()
+const { fetchVariables } = useVariableAPI()
 const { fetchOrganization, safeSignOut } = useAuthSession()
 const { fetchGitHubConnectionStatus, gitHubConfigured, fetchGitHubInstallURL } =
 	useGitHubAPI()
@@ -45,10 +52,10 @@ const { useFetchNotificationCount } = useNotificationAPI()
 const fetchNotificationCount = useFetchNotificationCount({ read: false })
 const editorStore = useEditorStore()
 const { openExternalLink } = useExternalLinks()
-const isSearchModalOpen = ref(false)
 const wsState = useWebSocketStateStore()
 let unsubWsTreeChange: (() => void) | null | undefined = null
 let unsubWsTagTreeChange: (() => void) | null | undefined = null
+let unsubWsVariablesChange: (() => void) | null | undefined = null
 let initialLoadComplete = false
 
 const { toggleSidebar } = useSidebar()
@@ -56,10 +63,13 @@ useShortcut(SHORTCUT_ACTIONS.toggleSidebar.keyboardKey, () => {
 	toggleSidebar()
 })
 useShortcut(SHORTCUT_ACTIONS.searchForDocuments.keyboardKey, () => {
-	isSearchModalOpen.value = !isSearchModalOpen.value
+	emit("toggle-search")
 })
 useShortcut(SHORTCUT_ACTIONS.toggleInbox.keyboardKey, () => {
 	emit("toggle-notifications")
+})
+useShortcut(SHORTCUT_ACTIONS.toggleVariables.keyboardKey, () => {
+	emit("toggle-variables")
 })
 useShortcut(SHORTCUT_ACTIONS.createNewDocument.keyboardKey, () => {
 	handleCreate({ parentId: null })
@@ -152,7 +162,7 @@ const sections = computed<Section[]>(() => {
 			name: t("sidebar.sections.top.search-button"),
 			icon: "lucide:search",
 			onClick: () => {
-				isSearchModalOpen.value = true
+				emit("toggle-search")
 			},
 			acceptsChildren: false,
 			active: false,
@@ -174,6 +184,28 @@ const sections = computed<Section[]>(() => {
 			draggable: false,
 			actions: [],
 			shortcutTooltip: SHORTCUT_ACTIONS.toggleInbox,
+			children: null,
+		},
+		{
+			id: "variables",
+			name: t("sidebar.sections.top.variables"),
+			count: props.variableUsage?.usedOnCurrentPage,
+			countTooltip: props.variableUsage
+				? t("sidebar.sections.top.variables-usage", {
+						"used-on-current-page": props.variableUsage.usedOnCurrentPage,
+						total: props.variableUsage.total,
+					})
+				: undefined,
+			icon: "mingcute:braces-line",
+			onClick: () => {
+				emit("toggle-variables")
+			},
+			acceptsChildren: false,
+			active: props.variableSidebarOpen,
+			disabled: props.variableEditing,
+			shortcutTooltip: SHORTCUT_ACTIONS.toggleVariables,
+			draggable: false,
+			actions: [],
 			children: null,
 		},
 	]
@@ -274,10 +306,18 @@ onMounted(() => {
 			void fetchTagTree.refetch()
 		},
 	)
+	// the charts on every page read the variables, not only their panel
+	unsubWsVariablesChange = wsState.state?.subscribe(
+		WS_VARIABLES_CHANGE_TOPIC,
+		() => {
+			void fetchVariables.refetch()
+		},
+	)
 })
 onUnmounted(() => {
 	unsubWsTreeChange?.()
 	unsubWsTagTreeChange?.()
+	unsubWsVariablesChange?.()
 })
 
 if (import.meta.client) {
@@ -348,6 +388,16 @@ function handleTagVisibilityToggle(tag: TagTreeElement) {
 
 function tagActions(tag: TagTreeElement): SidebarItemAction[] {
 	return [
+		{
+			id: "edit-tag",
+			name: t("sidebar.item-dropdown-menu-buttons.edit-tag"),
+			icon: "mingcute:pencil-line",
+			menu: {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- eslint's ts program resolves .vue imports as error typed, vue-tsc accepts this
+				component: TagEditMenu,
+				props: { tag: tag },
+			},
+		},
 		{
 			id: "hide-tag",
 			name: t("sidebar.item-dropdown-menu-buttons.hide-tag"),
@@ -588,6 +638,5 @@ async function installSlack() {
 				</ShadcnUiSidebarFooter>
 			</div>
 		</Transition>
-		<SearchModal v-model="isSearchModalOpen" />
 	</ShadcnUiSidebar>
 </template>

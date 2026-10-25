@@ -47,7 +47,7 @@ describe("<ShortcutTooltip>", { concurrent: false }, () => {
 		vi.useFakeTimers()
 		const wrapper = await mountTooltip({ shortcut: SHORTCUT })
 
-		await wrapper.get("button").trigger("pointerenter")
+		await wrapper.get("button").trigger("pointerover")
 		await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS - 1)
 
 		expect(openTooltipText(wrapper)).not.toContain("Ctrl")
@@ -59,7 +59,7 @@ describe("<ShortcutTooltip>", { concurrent: false }, () => {
 		vi.useFakeTimers()
 		const wrapper = await mountTooltip({ shortcut: SHORTCUT })
 
-		await wrapper.get("button").trigger("pointerenter")
+		await wrapper.get("button").trigger("pointerover")
 		await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
 
 		expect(openTooltipText(wrapper)).toContain("Ctrl")
@@ -72,7 +72,7 @@ describe("<ShortcutTooltip>", { concurrent: false }, () => {
 		vi.useFakeTimers()
 		const wrapper = await mountTooltip({ shortcut: SHORTCUT })
 
-		await wrapper.get("button").trigger("pointerenter")
+		await wrapper.get("button").trigger("pointerover")
 		await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
 
 		expect(openTooltipText(wrapper)).toContain(
@@ -88,7 +88,7 @@ describe("<ShortcutTooltip>", { concurrent: false }, () => {
 			shortcut: { keyboardKey: SHORTCUT.keyboardKey, i18nKey: null },
 		})
 
-		await wrapper.get("button").trigger("pointerenter")
+		await wrapper.get("button").trigger("pointerover")
 		await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
 
 		expect(openTooltipText(wrapper)).toBe("CtrlK")
@@ -105,7 +105,7 @@ describe("<ShortcutTooltip>", { concurrent: false }, () => {
 			},
 		})
 
-		await wrapper.get("button").trigger("pointerenter")
+		await wrapper.get("button").trigger("pointerover")
 		await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
 
 		expect(openTooltipText(wrapper)).toBe(`G${t("shortcuts.connector")}ShiftI`)
@@ -116,7 +116,7 @@ describe("<ShortcutTooltip>", { concurrent: false }, () => {
 	}) => {
 		vi.useFakeTimers()
 		const wrapper = await mountTooltip({ shortcut: SHORTCUT })
-		await wrapper.get("button").trigger("pointerenter")
+		await wrapper.get("button").trigger("pointerover")
 		await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS - 100)
 
 		await wrapper.get("button").trigger("pointerleave")
@@ -128,7 +128,7 @@ describe("<ShortcutTooltip>", { concurrent: false }, () => {
 	it("hides an open tooltip when the pointer leaves", async ({ expect }) => {
 		vi.useFakeTimers()
 		const wrapper = await mountTooltip({ shortcut: SHORTCUT })
-		await wrapper.get("button").trigger("pointerenter")
+		await wrapper.get("button").trigger("pointerover")
 		await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
 
 		await wrapper.get("button").trigger("pointerleave")
@@ -137,13 +137,31 @@ describe("<ShortcutTooltip>", { concurrent: false }, () => {
 		expect(openTooltipText(wrapper)).not.toContain("Ctrl")
 	})
 
+	it("stays closed while the pointer is on a part with its own tooltip", async ({
+		expect,
+	}) => {
+		vi.useFakeTimers()
+		const wrapper = await mountUnderTooltipProvider(ShortcutTooltip, {
+			props: { shortcut: SHORTCUT },
+			slots: {
+				default: () =>
+					h("button", ["Trigger", h("span", { "data-own-tooltip": "" }, "4")]),
+			},
+		})
+
+		await wrapper.get("[data-own-tooltip]").trigger("pointerover")
+		await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
+
+		expect(openTooltipText(wrapper)).toBe("")
+	})
+
 	it("shows the macOS keys when the host is a mac", async ({ expect }) => {
 		vi.useFakeTimers()
 		useDetectHost().setOsType(HostOsType.MacOS)
 
 		try {
 			const wrapper = await mountTooltip({ shortcut: SHORTCUT })
-			await wrapper.get("button").trigger("pointerenter")
+			await wrapper.get("button").trigger("pointerover")
 			await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
 
 			expect(openTooltipText(wrapper)).toContain("⌘")

@@ -733,6 +733,36 @@ describe("useDataSourceAPI", { concurrent: false }, () => {
 			expect(failedCalls).toHaveLength(2)
 			expect(listCalls).toHaveLength(0)
 		})
+		it("keeps the answers for different variable values apart", async ({
+			expect,
+		}) => {
+			seedQueryData(LIST_KEY, [])
+			const listCalls = mockEndpoint("GET", LIST_URL, () => [])
+			const queryCalls = mockEndpoint("GET", QUERY_URL, () =>
+				makeQueryResult(1),
+			)
+			const params = ref({
+				...makeQueryParams(),
+				variableValues: { env: "prod" },
+			})
+			const api = makeDataSourceAPI()
+			const query = runInApp(() => api.useGenericQuery(DS_ID, params))
+			await query.refresh()
+
+			params.value = { ...params.value, variableValues: { env: "dev" } }
+			await query.refresh()
+
+			// a fresh answer per value, each with its variable values
+			expect(queryCalls).toHaveLength(2)
+			expect(queryCalls[1]?.query).toEqual({
+				q: "up",
+				chartType: "line_chart",
+				from: "2026-01-01T00:00:00.000Z",
+				to: "2026-01-02T00:00:00.000Z",
+				"var-env": "dev",
+			})
+			expect(listCalls).toHaveLength(0)
+		})
 	})
 
 	describe("useMultipleGenericQueries", () => {
@@ -818,6 +848,39 @@ describe("useDataSourceAPI", { concurrent: false }, () => {
 			])
 			expect(result.error).toBeNull()
 			expect(queryCalls).toHaveLength(2)
+			expect(listCalls).toHaveLength(0)
+		})
+
+		it("keeps the answers for different variable values apart", async ({
+			expect,
+		}) => {
+			seedQueryData(LIST_KEY, [])
+			const listCalls = mockEndpoint("GET", LIST_URL, () => [])
+			const queryCalls = mockEndpoint("GET", QUERY_URL, () =>
+				makeQueryResult(1),
+			)
+			const params = ref({
+				...makeMultiQueryParams(),
+				variableValues: { env: "prod" },
+			})
+			const api = makeDataSourceAPI()
+			const queries = runInApp(() =>
+				api.useMultipleGenericQueries(DS_ID, params, false),
+			)
+			await queries.refresh()
+
+			params.value = { ...params.value, variableValues: { env: "dev" } }
+			await queries.refresh()
+
+			// a fresh answer per value, each with its variable values
+			expect(queryCalls).toHaveLength(4)
+			expect(queryCalls[2]?.query).toEqual({
+				q: "up",
+				chartType: "line_chart",
+				from: "2026-01-01T00:00:00.000Z",
+				to: "2026-01-02T00:00:00.000Z",
+				"var-env": "dev",
+			})
 			expect(listCalls).toHaveLength(0)
 		})
 	})

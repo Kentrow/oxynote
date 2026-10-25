@@ -4,7 +4,7 @@ import type { Editor } from "@tiptap/core"
 import type { Node as PMNode } from "@tiptap/pm/model"
 import type { EditorState, Transaction } from "@tiptap/pm/state"
 import { computePosition, flip, offset, shift } from "@floating-ui/dom"
-import { cn } from "@/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import Comment from "./Comment.vue"
 import Bold from "@tiptap/extension-bold"
 import Code from "@tiptap/extension-code"
@@ -128,6 +128,7 @@ const userData = computed(() => {
 })
 const activePendingId = ref<string | null>(null)
 const popoverElem = useTemplateRef("comment-popover")
+const { height: popoverHeight } = useElementSize(popoverElem)
 const popoverPosition = ref({
 	left: 0,
 	top: 0,
@@ -416,6 +417,17 @@ watchImmediate(
 
 watchDeep(loadedCommentThread, () => {
 	updateCanScrollToBottom()
+})
+
+// the popover has no height until it is drawn, so an opening thread
+// scrolls once it is measured. A thread that changes height scrolls
+// again.
+watch([() => selectedComment.value?.id, popoverHeight], () => {
+	if (!popoverHeight.value) {
+		return
+	}
+
+	void scrollPopoverIntoView()
 })
 
 function removeEditorListeners() {
@@ -1360,6 +1372,17 @@ async function updatePopoverPosition() {
 	popoverPosition.value = { left: x, top: y, placement: placement }
 }
 
+// the popover is placed a tick after its thread changes. Scrolling
+// earlier aims at the place it had before.
+async function scrollPopoverIntoView() {
+	await nextTick()
+	await updatePopoverPosition()
+	await nextTick()
+
+	// eslint-disable-next-line @typescript-eslint/no-unsafe-call -- eslint's ts program resolves .vue imports as error typed, vue-tsc accepts this
+	popoverElem.value?.scrollIntoView({ behavior: "smooth", block: "nearest" })
+}
+
 // --- diff mode helpers ---
 
 // find the position of the node carrying the given uid in the source
@@ -1756,7 +1779,7 @@ function updateNodeCommentIdInEditor(
 		<div
 			v-if="selectedComment && anchorElem"
 			ref="comment-popover"
-			class="absolute z-popover flex max-h-[50dvh] w-[min(35.5rem,calc(100%-1rem))] flex-col overflow-hidden rounded-lg border border-border bg-background shadow-md"
+			class="absolute z-popover flex max-h-[50dvh] w-[min(35.5rem,calc(100%-1rem))] scroll-my-4 flex-col overflow-hidden rounded-lg border border-border bg-background shadow-md"
 			:style="{
 				top: `${popoverPosition.top + (selectedComment.nodeComment ? (popoverPosition.placement.includes('top') ? TOP_NODE_COMMENT_OFFSET_SIDE_TOP : TOP_NODE_COMMENT_OFFSET_SIDE_BOTTOM) : 0)}px`,
 				left: `${popoverPosition.left + (selectedComment.nodeComment && popoverPosition.placement.includes('start') ? LEFT_NODE_COMMENT_OFFSET : 0)}px`,

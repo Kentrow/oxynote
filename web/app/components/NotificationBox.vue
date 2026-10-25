@@ -23,7 +23,9 @@ const wsState = useWebSocketStateStore()
 const { fetchOrganization } = useAuthSession()
 const fetchNotificationCount = useFetchNotificationCount({ read: false })
 const fetchNotifications = useFetchManyNotifications({ limit: 50 })
-const now = useNow({ interval: 60 * 1000 })
+const now = useNow({
+	scheduler: (callback) => useIntervalFn(callback, 60 * 1000),
+})
 const list = useTemplateRef("list")
 // a failed load leaves the list at its end, so without the status check
 // the next page is asked for again at once, and without end

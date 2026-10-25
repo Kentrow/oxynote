@@ -13,9 +13,9 @@ import {
 	seedQueryData,
 	type RecordedCall,
 } from "~/composables/api/test-helpers"
-import { Dialog } from "./shadcn/ui/dialog"
-import { SidebarProvider } from "./shadcn/ui/sidebar"
-import { TooltipProvider } from "./shadcn/ui/tooltip"
+import { Dialog } from "#layers/ui/app/components/shadcn/ui/dialog"
+import { SidebarProvider } from "#layers/ui/app/components/shadcn/ui/sidebar"
+import { TooltipProvider } from "#layers/ui/app/components/shadcn/ui/tooltip"
 
 // eslint's ts program resolves .vue imports as error typed, so a component
 // handed to one of these helpers looks unsafe to it while vue-tsc types it
@@ -133,10 +133,25 @@ export function mountUnderSidebarProvider(
 		stubs?: Record<string, boolean>
 	} = {},
 ) {
-	return mountSuspended(SidebarProvider, {
-		slots: {
-			default: () => h(component, options.props, options.slots),
-		},
+	// the provider is bound to the persisted open state, as on the page, so
+	// seedPersistentState decides whether the sidebar starts open
+	const host = defineComponent(() => {
+		const open = useSidebarOpenState()
+
+		return () =>
+			h(
+				SidebarProvider,
+				{
+					open: open.value,
+					"onUpdate:open": (value: boolean) => {
+						open.value = value
+					},
+				},
+				{ default: () => h(component, options.props, options.slots) },
+			)
+	})
+
+	return mountSuspended(host, {
 		global: { stubs: options.stubs },
 	})
 }
@@ -203,6 +218,17 @@ export function menuItem(text: string): HTMLElement {
 	}
 
 	return item
+}
+
+// a dropdown sub menu's body only mounts once its trigger opens it, which
+// reka-ui does on a pointer press followed by a click
+export async function openSubMenu(text: string) {
+	const trigger = menuItem(text)
+
+	trigger.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))
+	trigger.click()
+	await nextTick()
+	await nextTick()
 }
 
 // dialog and sheet bodies are teleported into <body> too, so their buttons

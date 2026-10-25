@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	gogithub "github.com/google/go-github/v88/github"
@@ -175,7 +174,6 @@ func (m *Manager) GetInstallationClient(ctx context.Context, organizationID stri
 	}
 
 	return &InstallationClient{
-		user:               account.GetType() == "User",
 		owner:              account.GetLogin(),
 		installationClient: installationClient,
 	}, nil
@@ -206,57 +204,8 @@ func (m *Manager) createInstallationClient(installationID int64) (*gogithub.Clie
 
 // InstallationClient represents a GitHub App installation client.
 type InstallationClient struct {
-	user               bool
 	owner              string
 	installationClient *gogithub.Client
-}
-
-// FetchIssues fetches issues from the GitHub repository based on the provided query and repository name.
-func (ic *InstallationClient) FetchIssues(ctx context.Context, q, repository string) ([]Issue, error) {
-	bq := "in:title"
-
-	if repository != "" { //nolint:nestif // the branching is sequential and readable
-		_, resp, err := ic.installationClient.Repositories.Get(ctx, ic.owner, repository)
-		if err != nil {
-			if resp != nil && resp.StatusCode == http.StatusNotFound {
-				return nil, ErrRepositoryNotFound
-			}
-
-			return nil, parseGithubError(err)
-		}
-
-		bq = "repo:" + ic.owner + "/" + repository + " " + bq
-	} else {
-		if ic.user {
-			bq = "user:" + ic.owner + " " + bq
-		} else {
-			bq = "org:" + ic.owner + " " + bq
-		}
-	}
-
-	bq += " " + q
-
-	res, _, err := ic.installationClient.Search.Issues(ctx, bq, nil)
-	if err != nil {
-		return nil, parseGithubError(err)
-	}
-
-	var issues []Issue
-
-	for _, issue := range res.Issues {
-		issues = append(issues, Issue{
-			ID:        issue.GetID(),
-			Title:     issue.GetTitle(),
-			URL:       issue.GetHTMLURL(),
-			UserID:    issue.GetUser().GetID(),
-			Draft:     issue.GetDraft(),
-			State:     issue.GetState(),
-			UpdatedAt: issue.GetUpdatedAt().UTC().Format(time.RFC3339),
-			CreatedAt: issue.GetCreatedAt().UTC().Format(time.RFC3339),
-		})
-	}
-
-	return issues, nil
 }
 
 // FetchRepositories fetches all repositories accessible by the GitHub App
@@ -377,96 +326,6 @@ func (ic *InstallationClient) FetchRepositoryTree(ctx context.Context, repositor
 	}
 
 	return ParseTreeItems(tree.Entries), nil
-}
-
-// FetchFileContent fetches the content of a file from the specified repository and branch.
-func (ic *InstallationClient) FetchFileContent(ctx context.Context, repository, branch, path string) (*FileContent, error) {
-	repo, resp, err := ic.installationClient.Repositories.Get(ctx, ic.owner, repository)
-	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusNotFound {
-			return nil, ErrRepositoryNotFound
-		}
-
-		return nil, parseGithubError(err)
-	}
-
-	if branch == "" {
-		branch = repo.GetDefaultBranch()
-	}
-
-	fc, _, resp, err := ic.installationClient.Repositories.GetContents(
-		ctx,
-		ic.owner,
-		repository,
-		path,
-		&gogithub.RepositoryContentGetOptions{
-			Ref: branch,
-		},
-	)
-	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusNotFound {
-			return nil, ErrResourceNotFound
-		}
-
-		return nil, parseGithubError(err)
-	}
-
-	if fc == nil {
-		return nil, ErrResourceNotFound
-	}
-
-	content, err := fc.GetContent()
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode file content: %w", err)
-	}
-
-	return &FileContent{
-		Path:    fc.GetPath(),
-		Content: content,
-		SHA:     fc.GetSHA(),
-		Size:    fc.GetSize(),
-	}, nil
-}
-
-// FetchCodeSearchResults searches for code in the specified repository.
-func (ic *InstallationClient) FetchCodeSearchResults(ctx context.Context, repository, query string) ([]CodeSearchResult, error) {
-	_, resp, err := ic.installationClient.Repositories.Get(ctx, ic.owner, repository)
-	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusNotFound {
-			return nil, ErrRepositoryNotFound
-		}
-
-		return nil, parseGithubError(err)
-	}
-
-	q := "repo:" + ic.owner + "/" + repository + " " + query
-
-	res, _, err := ic.installationClient.Search.Code(ctx, q, &gogithub.SearchOptions{
-		TextMatch: true,
-	})
-	if err != nil {
-		return nil, parseGithubError(err)
-	}
-
-	var results []CodeSearchResult
-
-	for _, cr := range res.CodeResults {
-		item := CodeSearchResult{
-			Name: cr.GetName(),
-			Path: cr.GetPath(),
-			URL:  cr.GetHTMLURL(),
-		}
-
-		for _, tm := range cr.TextMatches {
-			if f := tm.GetFragment(); f != "" {
-				item.Fragments = append(item.Fragments, f)
-			}
-		}
-
-		results = append(results, item)
-	}
-
-	return results, nil
 }
 
 // createAppClient creates a new Github client using the app transport for GitHub Apps.

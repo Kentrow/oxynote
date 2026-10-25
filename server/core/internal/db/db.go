@@ -22,6 +22,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lann/builder"
 	"github.com/oxynote/oxynote/server/core/internal/tag"
+	"github.com/oxynote/oxynote/server/core/internal/variable"
 	"github.com/oxynote/oxynote/server/core/pkg/cryptoutil"
 	"github.com/oxynote/oxynote/server/core/pkg/errutil"
 	"github.com/oxynote/oxynote/server/core/pkg/ioutil"
@@ -236,6 +237,10 @@ func DetectError(err error) error {
 			)
 		case "tags_fk_organization_id_tag_name_key":
 			return tag.ErrDuplicateTagName
+		case "personal_variable_groups_fk_organization_id_group_name_key":
+			return variable.ErrDuplicateGroupName
+		case "personal_variables_fk_organization_id_variable_key_key":
+			return variable.ErrDuplicateKey
 		case "document_files_pkey":
 			return errutil.New(
 				http.StatusConflict,
@@ -287,6 +292,11 @@ type Tx struct {
 	agent
 
 	sql *sqlx.Tx
+}
+
+// SQLTx returns the underlying transaction.
+func (tx *Tx) SQLTx() *sql.Tx {
+	return tx.sql.Tx
 }
 
 // Commit commits a transaction.

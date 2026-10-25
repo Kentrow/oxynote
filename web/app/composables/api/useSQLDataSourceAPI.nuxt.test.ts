@@ -117,5 +117,34 @@ describe("useSQLDataSourceAPI", { concurrent: false }, () => {
 				to: "2026-01-02T00:00:00.000Z",
 			})
 		})
+		it("asks again for other variable values", async ({ expect }) => {
+			const calls = mockEndpoint(
+				"GET",
+				"/api/data-sources/ds1/sql/query-labels",
+				() => ({ labels: {} }),
+			)
+			const params = ref({
+				q: "SELECT * FROM metrics WHERE env = '$env'",
+				from: "2026-01-01T00:00:00.000Z",
+				to: "2026-01-02T00:00:00.000Z",
+				timeRangeKey: "last-24h",
+				variableValues: { env: "prod" },
+			})
+			const api = makeSQLDataSourceAPI()
+			const labels = runInApp(() => api.useSQLLabels("ds1", params, true))
+			await labels.refresh()
+
+			params.value = { ...params.value, variableValues: { env: "dev" } }
+			await labels.refresh()
+
+			// a fresh answer per value, each with its variable values
+			expect(calls).toHaveLength(2)
+			expect(calls[1]?.query).toEqual({
+				q: "SELECT * FROM metrics WHERE env = '$env'",
+				from: "2026-01-01T00:00:00.000Z",
+				to: "2026-01-02T00:00:00.000Z",
+				"var-env": "dev",
+			})
+		})
 	})
 })

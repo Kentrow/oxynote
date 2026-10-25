@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import DiffCountPill from "../diff/DiffCountPill.vue"
 import type { HookChangeCount } from "./hook-diff"
 import { HOOK_ICON_STATUS_CLASS, type HookGroupStatus } from "./hook-status"

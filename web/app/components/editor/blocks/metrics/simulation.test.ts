@@ -6,7 +6,8 @@ import {
 	isSimulationPreset,
 	simulationStepSeconds,
 } from "./simulation"
-import { MetricSimulationPreset, TimeRangePreset } from "./utils"
+import { MetricSimulationPreset } from "./utils"
+import { TimeRangePreset } from "~/utils/time-range"
 import { at } from "~/components/test-helpers"
 
 // a fixed instant so every expectation is reproducible; the generator is

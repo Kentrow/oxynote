@@ -107,6 +107,14 @@ describe("<oauth-consent>", { concurrent: false }, () => {
 		)
 	})
 
+	it("names the offline-access scope", async ({ expect }) => {
+		const wrapper = await mountConsent(
+			"?client_id=client1&scope=offline_access",
+		)
+
+		expect(wrapper.text()).toContain(t("oauth.consent.scopes.offline-access"))
+	})
+
 	it("shows an unrecognised scope verbatim rather than dropping it", async ({
 		expect,
 	}) => {

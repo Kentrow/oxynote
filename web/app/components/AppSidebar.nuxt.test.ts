@@ -8,6 +8,7 @@ import {
 } from "~/composables/api/test-helpers"
 import { mockNuxtImport } from "@nuxt/test-utils/runtime"
 import AppSidebar from "./AppSidebar.vue"
+import TagEditMenu from "./TagEditMenu.vue"
 import {
 	at,
 	clearTeleportedOverlays,
@@ -16,6 +17,7 @@ import {
 	menuItem,
 	mockAuthEndpoint,
 	mountUnderSidebarProvider,
+	openSubMenu,
 	seedAuthOrganization,
 	seedCapabilities,
 	seedPersistentState,
@@ -59,7 +61,8 @@ function treeElement() {
 }
 
 // AppSidebar refreshes the tree, the organization and the unread count on
-// mount, so every one of them needs an endpoint behind it
+// mount and loads the variables, so every one of them needs an endpoint
+// behind it
 function stubQueries(
 	options: {
 		tree?: unknown[]
@@ -71,6 +74,7 @@ function stubQueries(
 ) {
 	mockEndpoint("GET", "/api/documents/tree", () => options.tree ?? [])
 	mockEndpoint("GET", "/api/tags/tree", () => options.tags ?? [])
+	const variableCalls = mockEndpoint("GET", "/api/variables/tree", () => [])
 	mockEndpoint("GET", "/api/notifications/count", () => ({
 		count: options.unread ?? 0,
 	}))
@@ -82,6 +86,8 @@ function stubQueries(
 		["slack", "connected"],
 		options.slack ?? { connected: true, configured: true },
 	)
+
+	return { variableCalls }
 }
 
 function mountSidebar(props: Record<string, unknown> = {}) {
@@ -283,6 +289,67 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 		).toBe("true")
 	})
 
+	it("shows how many variables the page uses on the variables row", async ({
+		expect,
+	}) => {
+		stubQueries()
+
+		const wrapper = await mountSidebar({
+			variableUsage: { usedOnCurrentPage: 4, total: 8 },
+		})
+
+		expect(itemNamed(wrapper, t("sidebar.sections.top.variables")).text()).toBe(
+			`${t("sidebar.sections.top.variables")}4`,
+		)
+	})
+
+	it("explains the variable count in a tooltip", async ({ expect }) => {
+		stubQueries()
+		const wrapper = await mountSidebar({
+			variableUsage: { usedOnCurrentPage: 4, total: 8 },
+		})
+
+		await itemNamed(wrapper, t("sidebar.sections.top.variables"))
+			.get("[data-slot='tooltip-trigger']")
+			.trigger("focus")
+		await nextTick()
+
+		expect(document.body.textContent).toContain(
+			t("sidebar.sections.top.variables-usage", {
+				"used-on-current-page": 4,
+				total: 8,
+			}),
+		)
+	})
+
+	it("hides the variable count while the page uses none", async ({
+		expect,
+	}) => {
+		stubQueries()
+
+		const wrapper = await mountSidebar({
+			variableUsage: { usedOnCurrentPage: 0, total: 8 },
+		})
+
+		expect(itemNamed(wrapper, t("sidebar.sections.top.variables")).text()).toBe(
+			t("sidebar.sections.top.variables"),
+		)
+	})
+
+	it("marks the variables row active while the variables panel is open", async ({
+		expect,
+	}) => {
+		stubQueries()
+
+		const wrapper = await mountSidebar({ variableSidebarOpen: true })
+
+		expect(
+			itemNamed(wrapper, t("sidebar.sections.top.variables")).attributes(
+				"data-active",
+			),
+		).toBe("true")
+	})
+
 	it("lists the workspace pages under their own heading", async ({
 		expect,
 	}) => {
@@ -310,7 +377,7 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 		)
 	})
 
-	it("asks to open the search modal from the search row", async ({
+	it("asks to toggle the search modal from the search row", async ({
 		expect,
 	}) => {
 		stubQueries()
@@ -320,9 +387,7 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 			"click",
 		)
 
-		expect(
-			document.body.querySelector("[data-slot='dialog-content']"),
-		).not.toBeNull()
+		expect(sidebar(wrapper).emitted("toggle-search")).toHaveLength(1)
 	})
 
 	it("asks to toggle the notification sidebar from the inbox row", async ({
@@ -334,6 +399,35 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 		await itemNamed(wrapper, t("sidebar.sections.top.inbox")).trigger("click")
 
 		expect(sidebar(wrapper).emitted("toggle-notifications")).toHaveLength(1)
+	})
+
+	it("ignores clicks on the variables row while its variables are being edited", async ({
+		expect,
+	}) => {
+		stubQueries()
+
+		const wrapper = await mountSidebar({
+			variableSidebarOpen: true,
+			variableEditing: true,
+		})
+
+		expect(
+			itemNamed(wrapper, t("sidebar.sections.top.variables")).classes(),
+		).toContain("pointer-events-none")
+	})
+
+	it("asks to toggle the variables panel from the variables row", async ({
+		expect,
+	}) => {
+		stubQueries()
+		const wrapper = await mountSidebar()
+
+		await itemNamed(wrapper, t("sidebar.sections.top.variables")).trigger(
+			"click",
+		)
+
+		expect(sidebar(wrapper).emitted("toggle-variables")).toHaveLength(1)
+		expect(sidebar(wrapper).emitted("toggle-notifications")).toBeUndefined()
 	})
 
 	it("asks to create a page from the workspace heading action", async ({
@@ -416,7 +510,7 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 		seedQueryData(["documents", "tree"], [treeElement()])
 		seedQueryData(
 			["tags", "tree"],
-			[{ ...tagElement(TAG_A, "Production", "#22c55e"), hidden: true }],
+			[{ ...tagElement(TAG_A, "Production", "green"), hidden: true }],
 		)
 
 		const wrapper = await mountSidebar()
@@ -641,8 +735,8 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 	// in here supplies its own
 	function seededTags() {
 		return [
-			tagElement(TAG_A, "Production", "#22c55e"),
-			tagElement(TAG_B, "Staging", "#f97316"),
+			tagElement(TAG_A, "Production", "green"),
+			tagElement(TAG_B, "Staging", "orange"),
 		]
 	}
 
@@ -739,6 +833,21 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 			expect(calls[0]?.body).toEqual({ hidden: true })
 		})
 
+		it("opens a tag's edit menu from its options menu", async ({ expect }) => {
+			stubQueries({ tags: seededTags() })
+			const calls = mockEndpoint("PUT", `/api/tags/${TAG_A}`, () => ({}))
+			const wrapper = await mountSidebar()
+			await settleMutations()
+			await openRowMenu(wrapper, "Production")
+
+			await openSubMenu(t("sidebar.item-dropdown-menu-buttons.edit-tag"))
+
+			expect(wrapper.getComponent(TagEditMenu).props("tag")).toEqual(
+				tagElement(TAG_A, "Production", "green"),
+			)
+			expect(calls).toHaveLength(0)
+		})
+
 		it("asks the page to delete a tag from its options menu", async ({
 			expect,
 		}) => {
@@ -796,7 +905,7 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 			])
 		})
 
-		it("offers a tag its own two actions", async ({ expect }) => {
+		it("offers a tag its own three actions", async ({ expect }) => {
 			stubQueries({ tags: seededTags() })
 			const wrapper = await mountSidebar()
 			await settleMutations()
@@ -804,6 +913,7 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 			await openRowMenu(wrapper, "Production")
 
 			expect(openMenuRows()).toEqual([
+				t("sidebar.item-dropdown-menu-buttons.edit-tag"),
 				t("sidebar.item-dropdown-menu-buttons.hide-tag"),
 				t("sidebar.item-dropdown-menu-buttons.delete-tag"),
 			])
@@ -814,8 +924,8 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 		}) => {
 			stubQueries({
 				tags: [
-					tagElement(TAG_A, "Production", "#22c55e"),
-					{ ...tagElement(TAG_B, "Staging", "#f97316"), hidden: true },
+					tagElement(TAG_A, "Production", "green"),
+					{ ...tagElement(TAG_B, "Staging", "orange"), hidden: true },
 				],
 			})
 			const calls = mockEndpoint(
@@ -840,8 +950,8 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 		it("keeps the section while every tag is hidden", async ({ expect }) => {
 			stubQueries({
 				tags: [
-					{ ...tagElement(TAG_A, "Production", "#22c55e"), hidden: true },
-					{ ...tagElement(TAG_B, "Staging", "#f97316"), hidden: true },
+					{ ...tagElement(TAG_A, "Production", "green"), hidden: true },
+					{ ...tagElement(TAG_B, "Staging", "orange"), hidden: true },
 				],
 			})
 
@@ -862,8 +972,8 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 		it("keeps a hidden tag out of the section", async ({ expect }) => {
 			stubQueries({
 				tags: [
-					{ ...tagElement(TAG_A, "Production", "#22c55e"), hidden: true },
-					tagElement(TAG_B, "Staging", "#f97316"),
+					{ ...tagElement(TAG_A, "Production", "green"), hidden: true },
+					tagElement(TAG_B, "Staging", "orange"),
 				],
 			})
 
@@ -973,6 +1083,52 @@ describe("<AppSidebar>", { concurrent: false }, () => {
 			await nextTick()
 
 			expect(sidebar(wrapper).emitted("create-document")).toEqual([[DOC_ID]])
+		})
+	})
+
+	describe("websocket updates", { concurrent: false }, () => {
+		afterEach(() => {
+			useWebSocketStateStore().state = null
+		})
+
+		it("refetches the variables when they change elsewhere", async ({
+			expect,
+		}) => {
+			const subscribe = vi.fn().mockReturnValue(vi.fn())
+			useWebSocketStateStore().state = { subscribe } as never
+			const { variableCalls } = stubQueries()
+			await mountSidebar()
+			await settleMutations()
+			const before = variableCalls.length
+
+			const [, handler] = at(
+				subscribe.mock.calls.filter(
+					([topic]) => topic === WS_VARIABLES_CHANGE_TOPIC,
+				),
+				0,
+			) as [string, () => void]
+			handler()
+			await settleMutations()
+
+			expect(variableCalls.length).toBe(before + 1)
+		})
+
+		it("stops listening for variable changes when it goes away", async ({
+			expect,
+		}) => {
+			const unsubscribe = vi.fn()
+			const subscribe = vi.fn().mockReturnValue(unsubscribe)
+			useWebSocketStateStore().state = { subscribe } as never
+			stubQueries()
+			const wrapper = await mountSidebar()
+
+			wrapper.unmount()
+
+			// one unsubscribe per topic: documents, tags and variables
+			expect(subscribe.mock.calls.map(([topic]) => topic as string)).toContain(
+				WS_VARIABLES_CHANGE_TOPIC,
+			)
+			expect(unsubscribe).toHaveBeenCalledTimes(subscribe.mock.calls.length)
 		})
 	})
 

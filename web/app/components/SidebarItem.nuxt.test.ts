@@ -9,9 +9,13 @@ import {
 } from "./sidebar"
 import {
 	at,
+	clearTeleportedOverlays,
 	menuItem,
 	mountUnderSidebarProvider,
+	openSubMenu,
+	openTooltipText,
 	renderedIconNames,
+	teleportedButton,
 } from "./test-helpers"
 
 interface CapturedDragOptions {
@@ -62,6 +66,25 @@ mockNuxtImport("useDraggable", () => useDraggableMock)
 mockNuxtImport("useMouseInElement", () => useMouseInElementMock)
 mockNuxtImport("useElementBounding", () => useElementBoundingMock)
 
+// stands in for a component an action opens to the side: it shows its
+// label and is done once pressed
+const SIDE_MENU = defineComponent({
+	props: { label: { type: String, required: true } },
+	emits: ["close"],
+	setup(props, { emit }) {
+		return () =>
+			h(
+				"button",
+				{
+					onClick: () => {
+						emit("close")
+					},
+				},
+				props.label,
+			)
+	},
+})
+
 function makeItem(overrides: Partial<Item> = {}): Item {
 	return {
 		id: "doc-1",
@@ -89,6 +112,15 @@ function makeAction(
 	}
 }
 
+function sideMenuAction(): SidebarItemAction {
+	return {
+		id: "edit-tag",
+		name: "Edit Tag",
+		icon: "mingcute:pencil-line",
+		menu: { component: SIDE_MENU, props: { label: "Done" } },
+	}
+}
+
 async function mountItem(item: Item, props: Record<string, unknown> = {}) {
 	const wrapper = await mountUnderSidebarProvider(SidebarItem, {
 		props: { parentId: null, item: item, wrapper: null, ...props },
@@ -110,6 +142,7 @@ describe("<SidebarItem>", { concurrent: false }, () => {
 		})
 		capturedDrags.length = 0
 		capturedMice.length = 0
+		clearTeleportedOverlays()
 	})
 
 	// a drag left in flight keeps its dragged row and drop target in the
@@ -280,6 +313,33 @@ describe("<SidebarItem>", { concurrent: false }, () => {
 		)
 	})
 
+	it("explains the count in a tooltip once it is focused", async ({
+		expect,
+	}) => {
+		const { wrapper } = await mountItem(
+			makeItem({ url: null, count: 3, countTooltip: "3 of 5 are used" }),
+		)
+
+		await wrapper.get("[data-slot='tooltip-trigger']").trigger("focus")
+		await nextTick()
+
+		expect(openTooltipText(wrapper)).toBe("3 of 5 are used")
+	})
+
+	it("ignores the pointer on a disabled item without looking disabled", async ({
+		expect,
+	}) => {
+		const onClick = vi.fn()
+		const { wrapper } = await mountItem(
+			makeItem({ url: null, onClick: onClick, disabled: true }),
+		)
+
+		const button = wrapper.get("[data-slot='sidebar-menu-button']")
+
+		expect(button.classes()).toContain("pointer-events-none")
+		expect(button.attributes("aria-disabled")).toBeUndefined()
+	})
+
 	it("marks the active item", async ({ expect }) => {
 		const { wrapper } = await mountItem(makeItem(), { active: true })
 
@@ -387,6 +447,36 @@ describe("<SidebarItem>", { concurrent: false }, () => {
 		await nextTick()
 
 		expect(fn).toHaveBeenCalledTimes(1)
+	})
+
+	it("opens an action's own menu to the side", async ({ expect }) => {
+		const { wrapper } = await mountItem(
+			makeItem({ actions: [sideMenuAction()] }),
+		)
+		await wrapper.get("[data-slot='dropdown-menu-trigger']").trigger("click")
+
+		await openSubMenu("Edit Tag")
+
+		expect(teleportedButton("Done").textContent).toBe("Done")
+	})
+
+	it("shuts the whole menu once the side menu is done", async ({ expect }) => {
+		const { wrapper } = await mountItem(
+			makeItem({ actions: [sideMenuAction()] }),
+		)
+		await wrapper.get("[data-slot='dropdown-menu-trigger']").trigger("click")
+		await openSubMenu("Edit Tag")
+
+		teleportedButton("Done").click()
+		await nextTick()
+
+		// the content stays mounted while it animates out, so its state is
+		// what says it closed
+		expect(
+			document.body
+				.querySelector("[data-slot='dropdown-menu-content']")
+				?.getAttribute("data-state"),
+		).toBe("closed")
 	})
 
 	it("does not duplicate itself as a drag ghost while at rest", async ({

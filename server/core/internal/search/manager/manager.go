@@ -1,136 +1,73 @@
-// Package manager runs the background search-indexing jobs.
+// Package manager queues and applies search-indexing jobs.
 package manager
 
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/oxynote/oxynote/server/core/internal/document"
+	"github.com/oxynote/oxynote/server/core/internal/job"
 	"github.com/oxynote/oxynote/server/core/internal/search"
 	"github.com/oxynote/oxynote/server/core/pkg/errutil"
-	"github.com/oxynote/oxynote/server/core/pkg/logutil"
-	"github.com/oxynote/oxynote/server/core/pkg/timeutil"
+	"github.com/oxynote/oxynote/server/core/pkg/sqlutil"
 	"github.com/rs/xid"
 )
 
-const (
-	// _processingBatch defines how many search jobs to fetch in one batch.
-	_processingBatch = 100
+// _pollInterval specifies how often the search queue is checked for jobs.
+// The queue runs one job per check, so this also caps how many index
+// updates a second core can apply.
+var _pollInterval = 100 * time.Millisecond
 
-	// _processingInterval defines how often queued jobs are processed
-	// when no nudge arrives, which covers jobs queued before a restart.
-	_processingInterval = time.Second * 10
-)
-
-// Manager applies search jobs: for every queued scope it reads the
-// current rows and makes the index match them.
+// Manager queues search jobs and applies them: for every scope it reads
+// the current rows and makes the index match them.
 type Manager struct {
-	log   *slog.Logger
 	db    DB
 	index Index
-	pe    *timeutil.PeriodicExec
+	queue Queue
 }
 
-// NewManager creates a new Manager with the given database and index.
-func NewManager(log *slog.Logger, db DB, index Index) *Manager {
+// NewManager creates a new Manager and registers its job queue with the
+// job manager.
+func NewManager(db DB, index Index, jobMan JobManager) (*Manager, error) {
 	m := &Manager{
-		log:   log.With("component", "search-job-manager"),
 		db:    db,
 		index: index,
 	}
 
-	m.pe = timeutil.NewPeriodicExec(
-		_processingInterval,
-		0,
-		m.run,
-		logutil.RecoveryValue(m.log, logutil.NewRecoveryPlan("recovered from a panic while processing search jobs")),
-		true,
-	)
-
-	return m
-}
-
-// Start processes the queued jobs right away, then again on every trigger
-// and on the periodic interval, until the context ends.
-func (m *Manager) Start(ctx context.Context) {
-	m.log.Info("starting")
-	defer m.log.Info("stopped")
-
-	m.pe.Start(ctx)
-}
-
-// Trigger runs a pass right away. A job producer calls it once the job's
-// transaction has committed, so the index follows a change without
-// waiting for the periodic pass.
-func (m *Manager) Trigger() {
-	m.pe.Trigger()
-}
-
-// run processes the queued jobs once, reporting a failed pass.
-func (m *Manager) run(ctx context.Context) {
-	if err := m.processJobs(ctx); err != nil {
-		m.log.With("error", err).
-			Error("processing search jobs")
+	// one job at a time, so two syncs of a scope never race and leave the
+	// older read in the index.
+	q := job.NewQueue(job.QueueIndexSearch, m.processJob, job.QueueOptions{
+		Concurrency:  1,
+		PollInterval: _pollInterval,
+	})
+	if err := jobMan.Register(q); err != nil {
+		return nil, fmt.Errorf("registering the search queue: %w", err)
 	}
+
+	m.queue = q
+
+	return m, nil
 }
 
-// processJobs applies the queued jobs in a paginated manner. A job that
-// fails stays in the database for the next pass; the jobs after it are
-// unaffected, since every job describes a scope's current state rather
-// than a change against its predecessors.
-func (m *Manager) processJobs(ctx context.Context) error {
-	var offsetID int64
-
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		jobs, err := m.db.FetchSearchJobs(ctx, offsetID, _processingBatch)
-		if err != nil {
-			return fmt.Errorf("fetching paginated search jobs: %w", err)
-		}
-
-		for _, job := range jobs {
-			offsetID = job.ID
-
-			if err := m.apply(ctx, job); err != nil {
-				m.log.With("job_id", job.ID).
-					With("error", err).
-					Error("applying search job")
-
-				continue
-			}
-
-			// a job queued again meanwhile carries a newer version, so the
-			// delete leaves it for the next pass.
-			if err := m.db.DeleteSearchJob(ctx, job.ID, job.Version); err != nil {
-				m.log.With("job_id", job.ID).
-					With("error", err).
-					Error("deleting search job")
-			}
-		}
-
-		if len(jobs) < _processingBatch {
-			return nil
-		}
-	}
+// Enqueue queues the job on the transaction, to run once it commits.
+func (m *Manager) Enqueue(ctx context.Context, tx sqlutil.Tx, j search.Job) error {
+	return m.queue.Enqueue(ctx, tx, j)
 }
 
-// apply brings the job's scope in line with the database.
-func (m *Manager) apply(ctx context.Context, job search.Job) error {
+// processJob brings the job's scope in line with the database. It is safe to
+// repeat, since it compares the scope's current rows, not a change.
+func (m *Manager) processJob(ctx context.Context, j search.Job) error {
 	switch {
-	case job.BranchID.Valid:
-		return m.syncBranch(ctx, job.BranchID.V)
-	case job.DocumentID.Valid:
-		return m.syncDocument(ctx, job.DocumentID.V)
+	case j.BranchID.Valid:
+		return m.syncBranch(ctx, j.BranchID.V)
+	case j.DocumentID.Valid:
+		return m.syncDocument(ctx, j.DocumentID.V)
 	default:
 		// an organization is queued only by its teardown, which runs
 		// while its rows still exist, so there is nothing to compare
 		// against: the scope is always a removal.
-		return m.index.DeleteOrganization(ctx, job.OrganizationID)
+		return m.index.DeleteOrganization(ctx, j.OrganizationID)
 	}
 }
 
@@ -170,19 +107,27 @@ func (m *Manager) syncDocument(ctx context.Context, documentID xid.ID) error {
 	return nil
 }
 
+// JobManager defines the job manager operations required by the Manager.
+//
+//go:generate ../../../scripts/codegen/mock -t internal JobManager job_manager
+type JobManager interface {
+	// Register should add the queue to the job manager.
+	Register(q job.Registrable) error
+}
+
+// Queue defines the job queue operations required by the Manager.
+//
+//go:generate ../../../scripts/codegen/mock -t internal Queue queue
+type Queue interface {
+	// Enqueue should queue the job on the transaction, to run once it
+	// commits.
+	Enqueue(ctx context.Context, tx sqlutil.Tx, j search.Job) error
+}
+
 // DB defines the database operations required by the Manager.
 //
 //go:generate ../../../scripts/codegen/mock -t internal DB db
 type DB interface {
-	// FetchSearchJobs should retrieve a batch of search jobs with IDs
-	// greater than the given offset ID, limited to the specified number
-	// of jobs.
-	FetchSearchJobs(ctx context.Context, offsetID, limit int64) ([]search.Job, error)
-
-	// DeleteSearchJob should delete the search job when it is still at
-	// the given version.
-	DeleteSearchJob(ctx context.Context, id, version int64) error
-
 	// FetchDocumentUnsafeByBranchID should fetch the document joined
 	// against the branch, across organizations.
 	FetchDocumentUnsafeByBranchID(ctx context.Context, branchID xid.ID) (*document.Document, error)

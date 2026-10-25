@@ -309,7 +309,7 @@
    "type": "calloutBlock",
    "attrs": {
     "uid": "c1",
-    "icon": "lucide:info"
+    "icon": "mingcute:information-fill"
    },
    "content": [
     {
@@ -435,6 +435,8 @@
       ],
       "simulationActive": true,
       "simulationPreset": "cpu_usage",
+      "timeRange": "last_1_hour",
+      "refreshInterval": "1m",
       "width": "standard",
       "title": null
      }

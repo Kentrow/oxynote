@@ -9,6 +9,10 @@ import {
 } from "~/components/editor/diff/change-count"
 import DiffFieldChanges from "~/components/editor/diff/DiffFieldChanges.vue"
 import {
+	METRIC_REFRESH_INTERVAL_REFERENCE,
+	METRIC_TIME_RANGE_REFERENCE,
+} from "~/utils/variable"
+import {
 	VisualizationDataUnit,
 	VisualizationMiscUnit,
 	VisualizationTimeUnit,
@@ -69,17 +73,22 @@ function toRow(change: AttributeChange): FieldChange {
 				),
 			)
 		case "timeRange":
-			return row(t("editor.metrics.config.time-range-label"), change, (value) =>
-				t(`editor.metrics.config.time-range-options.${displayValue(value)}`),
+			return row(
+				t("editor.metrics.config.time-range-label"),
+				change,
+				(value) =>
+					value === METRIC_TIME_RANGE_REFERENCE
+						? t("editor.metrics.config.variable-time-range")
+						: t(`general.time-range-options.${displayValue(value)}`),
 			)
 		case "refreshInterval":
 			return row(
 				t("editor.metrics.config.refresh-interval-label"),
 				change,
 				(value) =>
-					t(
-						`editor.metrics.config.refresh-interval-options.${displayValue(value)}`,
-					),
+					value === METRIC_REFRESH_INTERVAL_REFERENCE
+						? t("editor.metrics.config.variable-refresh-interval")
+						: t(`general.refresh-interval-options.${displayValue(value)}`),
 			)
 		case "thresholds":
 			return row(t("editor.metrics.config.thresholds-label"), change, (value) =>

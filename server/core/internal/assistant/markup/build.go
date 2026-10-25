@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/oxynote/oxynote/server/core/internal/assistant/icon"
 	"github.com/oxynote/oxynote/server/core/internal/document"
 	"github.com/oxynote/oxynote/server/core/pkg/strutil"
 )
@@ -187,7 +188,7 @@ func (b *builder) build(n node, stored document.Block) (document.Block, error) {
 	case _elemLeft, _elemRight:
 		return document.Block{}, fmt.Errorf("line %d: <%s> belongs inside <%s>", n.line, n.name, _elemSplitDoc)
 	case _elemParam:
-		return document.Block{}, fmt.Errorf("line %d: <%s> belongs inside <%s>", n.line, n.name, _elemParams)
+		return document.Block{}, fmt.Errorf("line %d: <%s> belongs inside <%s>; to add one, send the whole <%s> to replace_blocks", n.line, n.name, _elemParams, _elemParams)
 	default:
 		return document.Block{}, fmt.Errorf("line %d: <%s> is inline; put it inside a <p>", n.line, n.name)
 	}
@@ -239,7 +240,17 @@ func (b *builder) buildContainer(n node, typ document.BlockNodeType, child strin
 
 	switch typ {
 	case document.BlockNodeCalloutBlock:
-		blk.Attrs[document.AttrIcon] = cmp.Or(n.attrs[document.AttrIcon], _defaultCalloutIcon)
+		id := cmp.Or(n.attrs[document.AttrIcon], _defaultCalloutIcon)
+
+		// the default and a kept callout's own icon may be outside the
+		// picker's list. Both pass, since the caller did not pick them.
+		if id != _defaultCalloutIcon && id != stored.Attrs.Get(document.AttrIcon).String() {
+			if err := icon.Validate(id); err != nil {
+				return document.Block{}, fmt.Errorf("line %d: %w", n.line, err)
+			}
+		}
+
+		blk.Attrs[document.AttrIcon] = id
 	case document.BlockNodeOrderedList:
 		if start, err := strconv.Atoi(n.attrs[document.AttrStart]); err == nil && start > 1 {
 			blk.Attrs[document.AttrStart] = start
@@ -347,6 +358,12 @@ func (b *builder) buildSplitDoc(n node, stored document.Block) (document.Block, 
 		return document.Block{}, err
 	}
 
+	// the editor gives a new split doc an h1 and offers no other level,
+	// so a left side opening with anything else could not be made there.
+	if len(left) == 0 || left[0].Type != document.BlockNodeHeading || left[0].Attrs.Get(document.AttrLevel).Int() != 1 {
+		return document.Block{}, fmt.Errorf("line %d: <left> opens with an <h1>, the title of the split doc", sides[0].line)
+	}
+
 	right, err := b.blocks(sides[1].children, "<right>")
 	if err != nil {
 		return document.Block{}, err
@@ -415,7 +432,7 @@ func buildParam(n node, stored document.Block) (document.Block, error) {
 
 // buildMetric builds a metric block from its JSON attributes.
 func buildMetric(n node, stored document.Block) (document.Block, error) {
-	attrs, err := decodeMetricAttrs(n.text)
+	attrs, err := decodeMetricAttrs(n.text, stored)
 	if err != nil {
 		return document.Block{}, fmt.Errorf("line %d: %w", n.line, err)
 	}
@@ -425,6 +442,7 @@ func buildMetric(n node, stored document.Block) (document.Block, error) {
 	}
 
 	setSimulation(attrs, stored)
+	setMetricWindow(attrs, stored)
 
 	blk := newBlock(document.BlockNodeMetricBlock, stored, nil)
 	maps.Copy(blk.Attrs, attrs)

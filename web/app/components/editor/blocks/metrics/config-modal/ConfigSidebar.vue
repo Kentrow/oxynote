@@ -1,9 +1,8 @@
 <script lang="ts" setup>
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import ConfigField from "../ConfigField.vue"
 import { VISUALIZATION_MAX_DECIMALS, type MetricConfig } from "../utils"
 import ThresholdInput from "./ThresholdInput.vue"
-import { chartStyles } from "~/assets/css"
 import { DiffStatus } from "~/components/editor/diff/position-map"
 import VisualizationTypeSelect from "./VisualizationTypeSelect.vue"
 import DataSourceSelect from "./DataSourceSelect.vue"
@@ -258,7 +257,7 @@ function addThreshold() {
 		{
 			value: undefined,
 			label: undefined,
-			color: chartStyles().selectableColors.default,
+			color: DEFAULT_PALETTE_COLOR,
 		},
 	]
 }

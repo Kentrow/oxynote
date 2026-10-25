@@ -117,6 +117,7 @@ check-lint:
 	@$(QUIET) "lint-checking datagen" sh -c 'cd datagen && make check-lint'
 	@$(QUIET) "lint-checking e2e" sh -c 'cd e2e && pnpm run check-lint'
 	@$(QUIET) "lint-checking launcher" sh -c 'cd docker/prod/launcher && pnpm run check-lint'
+	@$(QUIET) "checking icon lists" node scripts/check-icons.mjs
 
 # unit tests of every component, with the coverage gates CI applies.
 .PHONY: test

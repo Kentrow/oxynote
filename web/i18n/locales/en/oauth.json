@@ -8,7 +8,8 @@
 			"scopes": {
 				"documents-read": "Read and search your documents",
 				"documents-write": "Create, edit and delete your documents",
-				"data-sources-read": "Read and query your data sources"
+				"data-sources-read": "Read and query your data sources",
+				"offline-access": "Stay connected without asking you to sign in again"
 			},
 			"approve": "Authorize",
 			"deny": "Deny",

@@ -40,7 +40,7 @@ Read tools run immediately. Write tools wait for the user's confirmation, and ev
 // Shared verbatim between the chat prompt and the MCP instructions.
 const _workflowSection = `## Workflow
 
-Read before you write: find the document with list_documents or search_documents and read it with get_document. Every content tool names a branch by branch_id: listings and search hits carry one, get_document lists every branch, and a protected branch is read-only. Before adding a metric, find names with get_data_source_metadata and run the query through query_data_source with the chart_type you intend, so you know it renders.
+Read before you write: find the document with list_documents or search_documents and read it with get_document. Every content tool names a branch by branch_id: listings and search hits carry one, get_document lists every branch, and a protected branch is read-only. Before adding a metric, find names with get_data_source_metadata and run the query through query_data_source with the chart_type you intend, so you know it renders. Metrics follow the built-in metric_range and metric_refresh variables, so to show another period, set the variable rather than editing charts.
 
 `
 
@@ -50,7 +50,7 @@ Read before you write: find the document with list_documents or search_documents
 // prompt and the MCP instructions.
 const _blockModelSection = `## Content
 
-get_document returns a document's blocks as XML, one element per block with its id. To change blocks, edit that XML and send it back with replace_blocks, keeping the id of every element that stays: a kept id keeps the block's comments, hooks and files. insert_blocks adds new blocks, many in one call, and its description lists every element. Inline text takes <b>, <i>, <u>, <s>, <code> and <a href>, and headings take plain text.
+get_document returns a document's blocks as XML, one element per block with its id. To change blocks, edit that XML and send it back with replace_blocks, keeping the id of every element that stays: a kept id keeps the block's comments, hooks and files. insert_blocks adds new blocks, many in one call, and its description lists every element.
 
 `
 
@@ -58,7 +58,7 @@ get_document returns a document's blocks as XML, one element per block with its 
 // between the chat prompt and the MCP instructions.
 const _etiquetteSection = `## Editing
 
-Make small, targeted edits and send independent ones together. Reorder with move_block, which keeps a block's id, rather than deleting and inserting. Write each section completely before the next, and keep names, numbers and claims consistent across the document.
+Make small, targeted edits and send independent ones together. Write each section completely before the next, and keep names, numbers and claims consistent across the document.
 
 `
 
@@ -66,7 +66,7 @@ Make small, targeted edits and send independent ones together. Reorder with move
 // Shared verbatim between the chat prompt and the MCP instructions.
 const _aestheticsSection = `## Style
 
-Documents are for humans to read. Open with the first real paragraph, since the name already shows above the content. Keep the outline flat, with a heading only over more than a paragraph or two. Use a callout for what the reader must not miss. Leave a code language empty unless the document names a stack, and title a titled pre with what the code is, such as POST /v1/assets/{id}.
+Open with the first real paragraph, since the name already shows above the content. Keep the outline flat, with a heading only over more than a paragraph or two. Use a callout for what the reader must not miss. Leave a code language empty unless the document names a stack. Write an endpoint as one split_doc: an <h1> naming the action, such as Submitting a transfer, <params> for its fields, and on its right a titled pre for the request, titled by method and path such as POST /v1/transfers, then one per response.
 
 `
 

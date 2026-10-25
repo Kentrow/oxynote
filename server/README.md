@@ -10,6 +10,14 @@ By default the following ports are opened:
 - `8080` - core application's HTTP and WebSocket server.
 - `8081` - auth-realtime's Hocuspocus HTTP and WebSocket server.
 
+# Database Schema
+
+`core/internal/db/schema.sql` is the schema that all core migrations produce,
+dumped with `pg_dump` from a test Postgres. After adding a migration, run
+`make schema` in `server/core`. Core's tests fail while the file is stale.
+The file is for reading and diffing only. Each foreign key sits next to its
+table, so some point at tables created further down, and `psql -f` fails on it.
+
 # Better Auth
 
 ## Using Migrations

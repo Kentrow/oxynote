@@ -51,6 +51,9 @@ jobs:
   e2e-prod:
     uses: ./.github/workflows/qa-e2e-prod.yml
 
+  icons:
+    uses: ./.github/workflows/qa-icons.yml
+
   publish:
     name: Publishing the image
     needs:
@@ -60,6 +63,7 @@ jobs:
       - datagen
       - launcher
       - e2e-prod
+      - icons
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:

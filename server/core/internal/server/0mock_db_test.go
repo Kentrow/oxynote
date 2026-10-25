@@ -18,6 +18,7 @@ import (
 	notificationCore "github.com/oxynote/oxynote/server/core/internal/notification"
 	"github.com/oxynote/oxynote/server/core/internal/search"
 	"github.com/oxynote/oxynote/server/core/internal/tag"
+	"github.com/oxynote/oxynote/server/core/internal/variable"
 	"github.com/oxynote/oxynote/server/core/pkg/httpserver"
 	"github.com/rs/xid"
 )
@@ -52,6 +53,12 @@ var _ DB = &DBMock{}
 //			},
 //			CountDocumentBranchesFunc: func(ctx context.Context, docID xid.ID, organizationID string) (int, error) {
 //				panic("mock out the CountDocumentBranches method")
+//			},
+//			CreateVariableFunc: func(ctx context.Context, v variable.Variable) error {
+//				panic("mock out the CreateVariable method")
+//			},
+//			CreateVariableGroupFunc: func(ctx context.Context, g variable.Group) error {
+//				panic("mock out the CreateVariableGroup method")
 //			},
 //			DeleteBranchReviewerFunc: func(ctx context.Context, branchID xid.ID, userID string, organizationID string) error {
 //				panic("mock out the DeleteBranchReviewer method")
@@ -221,9 +228,6 @@ var _ DB = &DBMock{}
 //			InsertGithubInstallationFunc: func(ctx context.Context, installationID int64) error {
 //				panic("mock out the InsertGithubInstallation method")
 //			},
-//			InsertSearchJobFunc: func(ctx context.Context, job search.Job) error {
-//				panic("mock out the InsertSearchJob method")
-//			},
 //			InsertSlackAppFunc: func(ctx context.Context, app slackCore.App) error {
 //				panic("mock out the InsertSlackApp method")
 //			},
@@ -299,6 +303,9 @@ var _ DB = &DBMock{}
 //			UpdateSlackUserLinkFunc: func(ctx context.Context, link slackCore.UserLink) error {
 //				panic("mock out the UpdateSlackUserLink method")
 //			},
+//			UpdateTagFunc: func(ctx context.Context, organizationID string, id xid.ID, inp tag.UpdateInput) error {
+//				panic("mock out the UpdateTag method")
+//			},
 //			UpdateTagTreeFunc: func(ctx context.Context, tree tag.Summaries, organizationID string) error {
 //				panic("mock out the UpdateTagTree method")
 //			},
@@ -338,6 +345,12 @@ type DBMock struct {
 
 	// CountDocumentBranchesFunc mocks the CountDocumentBranches method.
 	CountDocumentBranchesFunc func(ctx context.Context, docID xid.ID, organizationID string) (int, error)
+
+	// CreateVariableFunc mocks the CreateVariable method.
+	CreateVariableFunc func(ctx context.Context, v variable.Variable) error
+
+	// CreateVariableGroupFunc mocks the CreateVariableGroup method.
+	CreateVariableGroupFunc func(ctx context.Context, g variable.Group) error
 
 	// DeleteBranchReviewerFunc mocks the DeleteBranchReviewer method.
 	DeleteBranchReviewerFunc func(ctx context.Context, branchID xid.ID, userID string, organizationID string) error
@@ -507,9 +520,6 @@ type DBMock struct {
 	// InsertGithubInstallationFunc mocks the InsertGithubInstallation method.
 	InsertGithubInstallationFunc func(ctx context.Context, installationID int64) error
 
-	// InsertSearchJobFunc mocks the InsertSearchJob method.
-	InsertSearchJobFunc func(ctx context.Context, job search.Job) error
-
 	// InsertSlackAppFunc mocks the InsertSlackApp method.
 	InsertSlackAppFunc func(ctx context.Context, app slackCore.App) error
 
@@ -584,6 +594,9 @@ type DBMock struct {
 
 	// UpdateSlackUserLinkFunc mocks the UpdateSlackUserLink method.
 	UpdateSlackUserLinkFunc func(ctx context.Context, link slackCore.UserLink) error
+
+	// UpdateTagFunc mocks the UpdateTag method.
+	UpdateTagFunc func(ctx context.Context, organizationID string, id xid.ID, inp tag.UpdateInput) error
 
 	// UpdateTagTreeFunc mocks the UpdateTagTree method.
 	UpdateTagTreeFunc func(ctx context.Context, tree tag.Summaries, organizationID string) error
@@ -667,6 +680,20 @@ type DBMock struct {
 			DocID xid.ID
 			// OrganizationID is the organizationID argument value.
 			OrganizationID string
+		}
+		// CreateVariable holds details about calls to the CreateVariable method.
+		CreateVariable []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// V is the v argument value.
+			V variable.Variable
+		}
+		// CreateVariableGroup holds details about calls to the CreateVariableGroup method.
+		CreateVariableGroup []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// G is the g argument value.
+			G variable.Group
 		}
 		// DeleteBranchReviewer holds details about calls to the DeleteBranchReviewer method.
 		DeleteBranchReviewer []struct {
@@ -1148,13 +1175,6 @@ type DBMock struct {
 			// InstallationID is the installationID argument value.
 			InstallationID int64
 		}
-		// InsertSearchJob holds details about calls to the InsertSearchJob method.
-		InsertSearchJob []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-			// Job is the job argument value.
-			Job search.Job
-		}
 		// InsertSlackApp holds details about calls to the InsertSlackApp method.
 		InsertSlackApp []struct {
 			// Ctx is the ctx argument value.
@@ -1372,6 +1392,17 @@ type DBMock struct {
 			// Link is the link argument value.
 			Link slackCore.UserLink
 		}
+		// UpdateTag holds details about calls to the UpdateTag method.
+		UpdateTag []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OrganizationID is the organizationID argument value.
+			OrganizationID string
+			// ID is the id argument value.
+			ID xid.ID
+			// Inp is the inp argument value.
+			Inp tag.UpdateInput
+		}
 		// UpdateTagTree holds details about calls to the UpdateTagTree method.
 		UpdateTagTree []struct {
 			// Ctx is the ctx argument value.
@@ -1424,6 +1455,8 @@ type DBMock struct {
 	lockCheckOrganizationMember                   sync.RWMutex
 	lockCopyBranchTags                            sync.RWMutex
 	lockCountDocumentBranches                     sync.RWMutex
+	lockCreateVariable                            sync.RWMutex
+	lockCreateVariableGroup                       sync.RWMutex
 	lockDeleteBranchReviewer                      sync.RWMutex
 	lockDeleteDataSource                          sync.RWMutex
 	lockDeleteDocument                            sync.RWMutex
@@ -1480,7 +1513,6 @@ type DBMock struct {
 	lockInsertDocumentFile                        sync.RWMutex
 	lockInsertDocumentHook                        sync.RWMutex
 	lockInsertGithubInstallation                  sync.RWMutex
-	lockInsertSearchJob                           sync.RWMutex
 	lockInsertSlackApp                            sync.RWMutex
 	lockInsertSlackMessage                        sync.RWMutex
 	lockInsertSlackUserLink                       sync.RWMutex
@@ -1506,6 +1538,7 @@ type DBMock struct {
 	lockUpdateOrganizationLogo                    sync.RWMutex
 	lockUpdateSlackAppOrganizationID              sync.RWMutex
 	lockUpdateSlackUserLink                       sync.RWMutex
+	lockUpdateTag                                 sync.RWMutex
 	lockUpdateTagTree                             sync.RWMutex
 	lockUpdateUserImage                           sync.RWMutex
 	lockUpsertDocumentBranchView                  sync.RWMutex
@@ -1825,6 +1858,84 @@ func (mock *DBMock) CountDocumentBranchesCalls() []struct {
 	mock.lockCountDocumentBranches.RLock()
 	calls = mock.calls.CountDocumentBranches
 	mock.lockCountDocumentBranches.RUnlock()
+	return calls
+}
+
+// CreateVariable calls CreateVariableFunc.
+func (mock *DBMock) CreateVariable(ctx context.Context, v variable.Variable) error {
+	callInfo := struct {
+		Ctx context.Context
+		V   variable.Variable
+	}{
+		Ctx: ctx,
+		V:   v,
+	}
+	mock.lockCreateVariable.Lock()
+	mock.calls.CreateVariable = append(mock.calls.CreateVariable, callInfo)
+	mock.lockCreateVariable.Unlock()
+	if mock.CreateVariableFunc == nil {
+		var (
+			errOut error
+		)
+		return errOut
+	}
+	return mock.CreateVariableFunc(ctx, v)
+}
+
+// CreateVariableCalls gets all the calls that were made to CreateVariable.
+// Check the length with:
+//
+//	len(mockedDB.CreateVariableCalls())
+func (mock *DBMock) CreateVariableCalls() []struct {
+	Ctx context.Context
+	V   variable.Variable
+} {
+	var calls []struct {
+		Ctx context.Context
+		V   variable.Variable
+	}
+	mock.lockCreateVariable.RLock()
+	calls = mock.calls.CreateVariable
+	mock.lockCreateVariable.RUnlock()
+	return calls
+}
+
+// CreateVariableGroup calls CreateVariableGroupFunc.
+func (mock *DBMock) CreateVariableGroup(ctx context.Context, g variable.Group) error {
+	callInfo := struct {
+		Ctx context.Context
+		G   variable.Group
+	}{
+		Ctx: ctx,
+		G:   g,
+	}
+	mock.lockCreateVariableGroup.Lock()
+	mock.calls.CreateVariableGroup = append(mock.calls.CreateVariableGroup, callInfo)
+	mock.lockCreateVariableGroup.Unlock()
+	if mock.CreateVariableGroupFunc == nil {
+		var (
+			errOut error
+		)
+		return errOut
+	}
+	return mock.CreateVariableGroupFunc(ctx, g)
+}
+
+// CreateVariableGroupCalls gets all the calls that were made to CreateVariableGroup.
+// Check the length with:
+//
+//	len(mockedDB.CreateVariableGroupCalls())
+func (mock *DBMock) CreateVariableGroupCalls() []struct {
+	Ctx context.Context
+	G   variable.Group
+} {
+	var calls []struct {
+		Ctx context.Context
+		G   variable.Group
+	}
+	mock.lockCreateVariableGroup.RLock()
+	calls = mock.calls.CreateVariableGroup
+	mock.lockCreateVariableGroup.RUnlock()
 	return calls
 }
 
@@ -4222,45 +4333,6 @@ func (mock *DBMock) InsertGithubInstallationCalls() []struct {
 	return calls
 }
 
-// InsertSearchJob calls InsertSearchJobFunc.
-func (mock *DBMock) InsertSearchJob(ctx context.Context, job search.Job) error {
-	callInfo := struct {
-		Ctx context.Context
-		Job search.Job
-	}{
-		Ctx: ctx,
-		Job: job,
-	}
-	mock.lockInsertSearchJob.Lock()
-	mock.calls.InsertSearchJob = append(mock.calls.InsertSearchJob, callInfo)
-	mock.lockInsertSearchJob.Unlock()
-	if mock.InsertSearchJobFunc == nil {
-		var (
-			errOut error
-		)
-		return errOut
-	}
-	return mock.InsertSearchJobFunc(ctx, job)
-}
-
-// InsertSearchJobCalls gets all the calls that were made to InsertSearchJob.
-// Check the length with:
-//
-//	len(mockedDB.InsertSearchJobCalls())
-func (mock *DBMock) InsertSearchJobCalls() []struct {
-	Ctx context.Context
-	Job search.Job
-} {
-	var calls []struct {
-		Ctx context.Context
-		Job search.Job
-	}
-	mock.lockInsertSearchJob.RLock()
-	calls = mock.calls.InsertSearchJob
-	mock.lockInsertSearchJob.RUnlock()
-	return calls
-}
-
 // InsertSlackApp calls InsertSlackAppFunc.
 func (mock *DBMock) InsertSlackApp(ctx context.Context, app slackCore.App) error {
 	callInfo := struct {
@@ -5317,6 +5389,53 @@ func (mock *DBMock) UpdateSlackUserLinkCalls() []struct {
 	mock.lockUpdateSlackUserLink.RLock()
 	calls = mock.calls.UpdateSlackUserLink
 	mock.lockUpdateSlackUserLink.RUnlock()
+	return calls
+}
+
+// UpdateTag calls UpdateTagFunc.
+func (mock *DBMock) UpdateTag(ctx context.Context, organizationID string, id xid.ID, inp tag.UpdateInput) error {
+	callInfo := struct {
+		Ctx            context.Context
+		OrganizationID string
+		ID             xid.ID
+		Inp            tag.UpdateInput
+	}{
+		Ctx:            ctx,
+		OrganizationID: organizationID,
+		ID:             id,
+		Inp:            inp,
+	}
+	mock.lockUpdateTag.Lock()
+	mock.calls.UpdateTag = append(mock.calls.UpdateTag, callInfo)
+	mock.lockUpdateTag.Unlock()
+	if mock.UpdateTagFunc == nil {
+		var (
+			errOut error
+		)
+		return errOut
+	}
+	return mock.UpdateTagFunc(ctx, organizationID, id, inp)
+}
+
+// UpdateTagCalls gets all the calls that were made to UpdateTag.
+// Check the length with:
+//
+//	len(mockedDB.UpdateTagCalls())
+func (mock *DBMock) UpdateTagCalls() []struct {
+	Ctx            context.Context
+	OrganizationID string
+	ID             xid.ID
+	Inp            tag.UpdateInput
+} {
+	var calls []struct {
+		Ctx            context.Context
+		OrganizationID string
+		ID             xid.ID
+		Inp            tag.UpdateInput
+	}
+	mock.lockUpdateTag.RLock()
+	calls = mock.calls.UpdateTag
+	mock.lockUpdateTag.RUnlock()
 	return calls
 }
 

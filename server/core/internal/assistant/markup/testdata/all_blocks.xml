@@ -17,7 +17,7 @@
   <task id="ti1" checked="true">Done</task>
   <task id="ti2">Open</task>
 </tasks>
-<callout id="c1" icon="lucide:info">
+<callout id="c1" icon="mingcute:information-fill">
   <p id="c1p">Callout</p>
   <ul id="cl">
     <li id="cli">In callout</li>
@@ -32,7 +32,7 @@
 <figma id="fig1" src="https://figma.com/x" width="800"/>
 <file id="file1" src="/api/documents/d/files/f" name="a.pdf" contentType="application/pdf" size="1234"/>
 <metrics id="g1">
-  <metric id="mb1">{"dataSourceId":"ds1","queries":[{"legendFormat":"","name":"Q","query":"up"}],"simulationPreset":"cpu_usage","visualizationType":"line_chart","width":"standard"}</metric>
+  <metric id="mb1">{"dataSourceId":"ds1","queries":[{"legendFormat":"","name":"Q","query":"up"}],"refreshInterval":"1m","simulationPreset":"cpu_usage","timeRange":"last_1_hour","visualizationType":"line_chart","width":"standard"}</metric>
 </metrics>
 <split_doc id="sd1" inversed="true">
   <left>

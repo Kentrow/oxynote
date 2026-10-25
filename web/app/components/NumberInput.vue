@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import type { InputProps } from "./shadcn/ui/input"
+import type { InputProps } from "#layers/ui/app/components/shadcn/ui/input"
 
 const props = defineProps<
 	InputProps & {

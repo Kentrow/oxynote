@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/oxynote/oxynote/server/core/internal/document/hook/processor"
 	"github.com/oxynote/oxynote/server/core/internal/search"
 	"github.com/oxynote/oxynote/server/core/internal/tag"
+	"github.com/oxynote/oxynote/server/core/internal/variable"
 	"github.com/oxynote/oxynote/server/core/pkg/errutil"
 	"github.com/oxynote/oxynote/server/core/pkg/sqlutil"
 	"github.com/rs/xid"
@@ -30,6 +32,14 @@ import (
 // nothing in the session's organisation. Another organisation's id lands
 // here too, for the same reason as ErrUnknownDocument.
 var ErrUnknownTag = errors.New("no tag with that id in this organisation; call list_tags for the ids that exist")
+
+// ErrUnknownVariable is what a variable lookup reports for an id that
+// names nothing in the session's organisation.
+var ErrUnknownVariable = errors.New("no variable with that id in this organisation; call list_variables for the ids that exist")
+
+// ErrUnknownVariableGroup is what a variable group lookup reports for an
+// id that names nothing in the session's organisation.
+var ErrUnknownVariableGroup = errors.New("no variable group with that id in this organisation; call list_variables for the ids that exist")
 
 // errUnknownHook is what a hook lookup reports for an id the addressed
 // document does not hold. A hook of another document, another
@@ -57,9 +67,8 @@ type Deps struct {
 	// search is the full-text index behind search_documents.
 	search Searcher
 
-	// searchTrigger runs the search-job worker once a write that queued a
-	// job has committed.
-	searchTrigger SearchTrigger
+	// searchQueue queues the search jobs of document writes.
+	searchQueue SearchQueue
 
 	// runners hands out the runner a data-source tool reads through.
 	runners DataSourceRunners
@@ -73,6 +82,9 @@ type Deps struct {
 
 	// hookMan runs the hook writes.
 	hookMan HookManager
+
+	// variableMan runs the variable reads and writes.
+	variableMan VariableManager
 
 	// applier is the edit client for content mutations and the
 	// rename/set-icon ops that must propagate to connected editors.
@@ -106,11 +118,12 @@ func NewDeps(
 	log *slog.Logger,
 	db DB,
 	searcher Searcher,
-	searchTrigger SearchTrigger,
+	searchQueue SearchQueue,
 	runners DataSourceRunners,
 	githubMan *github.Manager,
 	webchangeClient *webchange.Client,
 	hookMan HookManager,
+	variableMan VariableManager,
 	applier EditApplier,
 	tree TreeNotifier,
 	tags TagNotifier,
@@ -125,11 +138,12 @@ func NewDeps(
 		),
 		db:              db,
 		search:          searcher,
-		searchTrigger:   searchTrigger,
+		searchQueue:     searchQueue,
 		runners:         runners,
 		githubMan:       githubMan,
 		webchangeClient: webchangeClient,
 		hookMan:         hookMan,
+		variableMan:     variableMan,
 		applier:         applier,
 		tree:            tree,
 		tags:            tags,
@@ -190,6 +204,16 @@ func (i *input) Decode(dst Args) error {
 	}
 
 	if err := jsonv2.Unmarshal(args, dst); err != nil {
+		// a malformed id is nearly always a miscopied one, so the
+		// message says how to get it right rather than naming Go types.
+		var serr *jsonv2.SemanticError
+		if errors.As(err, &serr) && serr.GoType == reflect.TypeFor[xid.ID]() {
+			return fmt.Errorf(
+				"%s is not an id; copy all 20 characters exactly from the result that gave it",
+				strings.TrimPrefix(string(serr.JSONPointer), "/"),
+			)
+		}
+
 		return fmt.Errorf("invalid input: %w", err)
 	}
 
@@ -376,9 +400,45 @@ func (i *input) FetchDocumentTree() (document.Summaries, error) {
 	return i.db.FetchDocumentTree(i.ctx, i.orgID)
 }
 
-// FetchDocumentChildren returns the direct children of parentID.
+// FetchBranchesByDocument returns every branch of the organisation's
+// documents, keyed by document, each document's default branch first.
+func (i *input) FetchBranchesByDocument() (map[xid.ID][]document.BranchSummary, error) {
+	branches, err := i.db.FetchDocumentBranchesByOrganizationID(i.ctx, i.orgID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching branches: %w", err)
+	}
+
+	out := make(map[xid.ID][]document.BranchSummary)
+
+	for _, b := range branches {
+		out[b.DocumentID] = append(out[b.DocumentID], b)
+	}
+
+	return out, nil
+}
+
+// FetchDocumentChildren returns the direct children of parentID. A
+// parent the organisation does not have is refused rather than listed as
+// childless; only an empty listing needs the check.
 func (i *input) FetchDocumentChildren(parentID null.Value[xid.ID]) (document.Summaries, error) {
-	return i.db.FetchDocumentTreeByDocumentParentID(i.ctx, parentID, i.orgID)
+	children, err := i.db.FetchDocumentTreeByDocumentParentID(i.ctx, parentID, i.orgID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(children) > 0 {
+		return children, nil
+	}
+
+	if cerr := i.db.CheckDocumentExists(i.ctx, parentID.V, i.orgID); cerr != nil {
+		if errutil.IsNotFound(cerr) {
+			return nil, fmt.Errorf("parent %s: %w", parentID.V, ErrUnknownDocument)
+		}
+
+		return nil, fmt.Errorf("checking parent: %w", cerr)
+	}
+
+	return children, nil
 }
 
 // CreateDocument inserts the document, its maintainer row and its
@@ -419,15 +479,14 @@ func (i *input) CreateDocument(doc document.Document) error {
 
 	// without this the document is invisible to search until someone
 	// edits it, since only the persist path queues a job.
-	if err := tx.InsertSearchJob(i.ctx, search.BranchScope(i.orgID, doc.ID, doc.BranchID)); err != nil {
-		return fmt.Errorf("insert search job: %w", err)
+	if err := i.searchQueue.Enqueue(i.ctx, tx, search.BranchScope(i.orgID, doc.ID, doc.BranchID)); err != nil {
+		return fmt.Errorf("enqueue search job: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
 	}
 
-	i.searchTrigger.Trigger()
 	i.notifyTreeChange(doc.ParentID)
 
 	return nil
@@ -485,8 +544,8 @@ func (i *input) DeleteDocument(id xid.ID) error {
 	}
 
 	for _, id := range ids {
-		if err := tx.InsertSearchJob(i.ctx, search.DocumentScope(i.orgID, id)); err != nil {
-			return fmt.Errorf("insert search job: %w", err)
+		if err := i.searchQueue.Enqueue(i.ctx, tx, search.DocumentScope(i.orgID, id)); err != nil {
+			return fmt.Errorf("enqueue search job: %w", err)
 		}
 	}
 
@@ -494,7 +553,6 @@ func (i *input) DeleteDocument(id xid.ID) error {
 		return fmt.Errorf("commit: %w", err)
 	}
 
-	i.searchTrigger.Trigger()
 	i.notifyTreeChange(parentID)
 
 	return nil
@@ -699,6 +757,170 @@ func (i *input) FetchTag(tagID xid.ID) (*tag.Summary, error) {
 	return nil, fmt.Errorf("tag %s: %w", tagID, ErrUnknownTag)
 }
 
+// FetchVariableTree returns the organisation's variable groups in order,
+// each with its variables, their options and the user's own values.
+func (i *input) FetchVariableTree() (variable.Tree, error) {
+	return i.variableMan.FetchTree(i.ctx, i.orgID, i.userID)
+}
+
+// SubstituteVariables returns the texts with the user's variables
+// substituted. The tree is fetched only when a text references one.
+func (i *input) SubstituteVariables(texts ...string) ([]string, error) {
+	if !variable.HasReference(texts...) {
+		return texts, nil
+	}
+
+	vars, err := i.FetchVariableTree()
+	if err != nil {
+		return nil, err
+	}
+
+	return vars.Substitute(nil, texts...), nil
+}
+
+// FetchVariableGroup returns the variable group the id names, with its
+// variables.
+func (i *input) FetchVariableGroup(groupID xid.ID) (*variable.GroupTree, error) {
+	tree, err := i.FetchVariableTree()
+	if err != nil {
+		return nil, fmt.Errorf("fetching variables: %w", err)
+	}
+
+	for _, g := range tree {
+		if g.ID == groupID {
+			return &g, nil
+		}
+	}
+
+	return nil, fmt.Errorf("variable group %s: %w", groupID, ErrUnknownVariableGroup)
+}
+
+// FetchVariable returns the variable the id names, with its options and
+// the user's own value.
+func (i *input) FetchVariable(variableID xid.ID) (*variable.Entry, error) {
+	tree, err := i.FetchVariableTree()
+	if err != nil {
+		return nil, fmt.Errorf("fetching variables: %w", err)
+	}
+
+	for _, g := range tree {
+		for _, v := range g.Variables {
+			if v.ID == variableID {
+				return &v, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("variable %s: %w", variableID, ErrUnknownVariable)
+}
+
+// CreateVariableGroup creates a variable group at the end of the
+// organisation's groups.
+func (i *input) CreateVariableGroup(inp variable.GroupCreateInput) (*variable.Group, error) {
+	return i.variableMan.CreateGroup(i.ctx, inp, i.orgID, i.userID)
+}
+
+// UpdateVariableGroup renames and/or recolours the variable group the id
+// names.
+func (i *input) UpdateVariableGroup(groupID xid.ID, inp variable.GroupUpdateInput) error {
+	if err := i.variableMan.UpdateGroup(i.ctx, groupID, inp, i.orgID); err != nil {
+		if errutil.IsNotFound(err) {
+			return fmt.Errorf("variable group %s: %w", groupID, ErrUnknownVariableGroup)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// DeleteVariableGroup deletes the empty variable group the id names.
+func (i *input) DeleteVariableGroup(groupID xid.ID) error {
+	if err := i.variableMan.DeleteGroup(i.ctx, groupID, i.orgID); err != nil {
+		if errutil.IsNotFound(err) {
+			return fmt.Errorf("variable group %s: %w", groupID, ErrUnknownVariableGroup)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// CreateVariable creates a variable at the end of its group.
+func (i *input) CreateVariable(inp variable.Input) (*variable.Variable, error) {
+	v, err := i.variableMan.CreateVariable(i.ctx, inp, i.orgID, i.userID)
+	if err != nil {
+		if errutil.IsNotFound(err) {
+			return nil, fmt.Errorf("variable group %s: %w", inp.GroupID, ErrUnknownVariableGroup)
+		}
+
+		return nil, err
+	}
+
+	return v, nil
+}
+
+// UpdateVariable replaces the definition of the variable the id names. A
+// not-found names the group when it is the group that is missing.
+func (i *input) UpdateVariable(variableID xid.ID, inp variable.Input) error {
+	err := i.variableMan.UpdateVariable(i.ctx, variableID, inp, i.orgID)
+	if err == nil {
+		return nil
+	}
+
+	if !errutil.IsNotFound(err) {
+		return err
+	}
+
+	if _, gerr := i.FetchVariableGroup(inp.GroupID); gerr != nil {
+		return gerr
+	}
+
+	return fmt.Errorf("variable %s: %w", variableID, ErrUnknownVariable)
+}
+
+// DeleteVariable deletes the variable the id names, with its options and
+// every user's value.
+func (i *input) DeleteVariable(variableID xid.ID) error {
+	if err := i.variableMan.DeleteVariable(i.ctx, variableID, i.orgID); err != nil {
+		if errutil.IsNotFound(err) {
+			return fmt.Errorf("variable %s: %w", variableID, ErrUnknownVariable)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// SetVariableValue sets the user's own value of the variable the id names.
+func (i *input) SetVariableValue(variableID xid.ID, value string) error {
+	if err := i.variableMan.SetValue(i.ctx, variableID, value, i.orgID, i.userID); err != nil {
+		if errutil.IsNotFound(err) {
+			return fmt.Errorf("variable %s: %w", variableID, ErrUnknownVariable)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// SetVariableDefault sets the default of the variable the id names, the
+// value everyone without their own sees.
+func (i *input) SetVariableDefault(variableID xid.ID, value string) error {
+	if err := i.variableMan.SetDefaultValue(i.ctx, variableID, value, i.orgID); err != nil {
+		if errutil.IsNotFound(err) {
+			return fmt.Errorf("variable %s: %w", variableID, ErrUnknownVariable)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
 // FetchBranchTags returns the tags the branch branchID names carries, in the
 // tags' display order.
 func (i *input) FetchBranchTags(documentID, branchID xid.ID) ([]tag.Tag, error) {
@@ -758,6 +980,10 @@ func (i *input) AssignTag(documentID, branchID, tagID xid.ID) error {
 		return err
 	}
 
+	if err = doc.AllowsDocumentChange(); err != nil {
+		return i.protectedBranch(doc)
+	}
+
 	if err := i.db.AssignBranchTag(i.ctx, i.orgID, doc.ID, doc.BranchID, tagID); err != nil {
 		if errutil.IsNotFound(err) {
 			return fmt.Errorf("tag %s: %w", tagID, ErrUnknownTag)
@@ -780,6 +1006,10 @@ func (i *input) UnassignTag(documentID, branchID, tagID xid.ID) error {
 	doc, err := i.FetchBranch(documentID, branchID)
 	if err != nil {
 		return err
+	}
+
+	if err = doc.AllowsDocumentChange(); err != nil {
+		return i.protectedBranch(doc)
 	}
 
 	if _, err := i.FetchTag(tagID); err != nil {
@@ -890,6 +1120,12 @@ func (i *input) CreateHook(documentID, branchID xid.ID, blockUID string, tp hook
 		return nil, err
 	}
 
+	// the manager refuses this too, but this error names the branches
+	// that take the change.
+	if err = doc.AllowsDocumentChange(); err != nil {
+		return nil, i.protectedBranch(doc)
+	}
+
 	// the manager would refuse this too, but the integration's own error
 	// tells the model what is missing.
 	switch tp {
@@ -948,8 +1184,20 @@ func (i *input) ResetHook(hk *hook.Hook) error {
 }
 
 // DeleteHook tears down what the hook holds outside the document and
-// removes its row.
+// removes its row. A hook on a protected branch stays, as the manager
+// would keep it, and the error names the branches that take changes.
 func (i *input) DeleteHook(hk *hook.Hook) error {
+	if hk.BranchID.Valid {
+		doc, err := i.FetchBranch(hk.DocumentID.V, hk.BranchID.V)
+		if err != nil {
+			return err
+		}
+
+		if err = doc.AllowsDocumentChange(); err != nil {
+			return i.protectedBranch(doc)
+		}
+	}
+
 	if err := i.hookMan.DeleteHook(i.ctx, hk.ID, hk.DocumentID.V, i.orgID, i.userID); err != nil {
 		return err
 	}
@@ -1001,6 +1249,11 @@ type DocumentDB interface {
 	// by get_document, and to tell an unknown branch from an unknown
 	// document.
 	FetchDocumentBranches(ctx context.Context, docID xid.ID, organizationID string) ([]document.BranchSummary, error)
+
+	// FetchDocumentBranchesByOrganizationID should list every branch of
+	// the organisation's documents, each document's default branch first.
+	// Used by list_documents and search_documents.
+	FetchDocumentBranchesByOrganizationID(ctx context.Context, organizationID string) ([]document.BranchSummary, error)
 
 	// FetchDocumentByBranchID should return the document the branch id
 	// names, on that branch. Used for every branch-targeted call.
@@ -1096,10 +1349,6 @@ type Tx interface {
 	// document's maintainer set. Used by create_document.
 	UpsertDocumentMaintainers(ctx context.Context, documentID xid.ID, organizationID string, maintainerIDs []string) error
 
-	// InsertSearchJob should queue the search job's scope. Used by
-	// create_document and delete_document.
-	InsertSearchJob(ctx context.Context, job search.Job) error
-
 	// DeleteDocument should remove a document and report the ids of the
 	// document and of every cascade-deleted descendant. Used by
 	// delete_document.
@@ -1127,12 +1376,49 @@ type HookManager interface {
 	ResetHook(ctx context.Context, id, documentID xid.ID, organizationID string) (*hook.Hook, error)
 }
 
-// SearchTrigger runs the search-job worker once a job has committed.
+// SearchQueue queues search jobs.
 //
-//go:generate ../../../scripts/codegen/mock -t internal SearchTrigger search_trigger
-type SearchTrigger interface {
-	// Trigger should run a search-job pass right away.
-	Trigger()
+//go:generate ../../../scripts/codegen/mock -t internal SearchQueue search_queue
+type SearchQueue interface {
+	// Enqueue should queue the job on the transaction, to run once it
+	// commits.
+	Enqueue(ctx context.Context, tx sqlutil.Tx, j search.Job) error
+}
+
+// VariableManager runs the variable reads and writes and announces the
+// writes.
+//
+//go:generate ../../../scripts/codegen/mock -t internal VariableManager variable_manager
+type VariableManager interface {
+	// FetchTree should fetch the organisation's groups, variables and
+	// options in order, each variable with the user's own value.
+	FetchTree(ctx context.Context, organizationID, userID string) (variable.Tree, error)
+
+	// CreateGroup should create a group at the end of the organisation's
+	// groups.
+	CreateGroup(ctx context.Context, inp variable.GroupCreateInput, organizationID, userID string) (*variable.Group, error)
+
+	// UpdateGroup should rename and/or recolour a group.
+	UpdateGroup(ctx context.Context, id xid.ID, inp variable.GroupUpdateInput, organizationID string) error
+
+	// DeleteGroup should delete an empty group.
+	DeleteGroup(ctx context.Context, id xid.ID, organizationID string) error
+
+	// CreateVariable should create a variable at the end of its group.
+	CreateVariable(ctx context.Context, inp variable.Input, organizationID, userID string) (*variable.Variable, error)
+
+	// UpdateVariable should replace a variable's definition.
+	UpdateVariable(ctx context.Context, id xid.ID, inp variable.Input, organizationID string) error
+
+	// DeleteVariable should delete a variable.
+	DeleteVariable(ctx context.Context, id xid.ID, organizationID string) error
+
+	// SetValue should set the user's own value.
+	SetValue(ctx context.Context, id xid.ID, value, organizationID, userID string) error
+
+	// SetDefaultValue should set the value everyone without their own
+	// sees.
+	SetDefaultValue(ctx context.Context, id xid.ID, value, organizationID string) error
 }
 
 // Searcher is the full-text search surface search_documents uses.

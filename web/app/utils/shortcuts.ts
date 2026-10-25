@@ -30,6 +30,13 @@ export const SHORTCUT_ACTIONS = {
 		},
 		i18nKey: "shortcuts.keys.toggle-inbox",
 	},
+	toggleVariables: {
+		keyboardKey: {
+			macOS: "⌘+⇧+X",
+			other: "Ctrl+Shift+X",
+		},
+		i18nKey: "shortcuts.keys.toggle-variables",
+	},
 	createNewDocument: {
 		keyboardKey: {
 			macOS: "⌘+.",
@@ -180,6 +187,10 @@ export const SHORTCUT_GROUPS: {
 			entry("toggle-inbox", {
 				kind: "action",
 				action: SHORTCUT_ACTIONS.toggleInbox,
+			}),
+			entry("toggle-variables", {
+				kind: "action",
+				action: SHORTCUT_ACTIONS.toggleVariables,
 			}),
 			entry("search-for-documents", {
 				kind: "action",

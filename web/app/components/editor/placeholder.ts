@@ -3,7 +3,7 @@ import Heading from "@tiptap/extension-heading"
 import { Extension, isNodeEmpty } from "@tiptap/core"
 import type { Editor } from "@tiptap/core"
 import type { Node as ProsemirrorNode } from "@tiptap/pm/model"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import { Plugin, PluginKey } from "@tiptap/pm/state"
 import { Decoration, DecorationSet } from "@tiptap/pm/view"
 import {

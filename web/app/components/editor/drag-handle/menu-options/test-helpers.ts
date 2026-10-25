@@ -7,7 +7,7 @@ import type { Node as PMNode } from "@tiptap/pm/model"
 import {
 	DropdownMenu,
 	DropdownMenuContent,
-} from "~/components/shadcn/ui/dropdown-menu"
+} from "#layers/ui/app/components/shadcn/ui/dropdown-menu"
 
 // eslint's ts program resolves .vue imports as error typed, so a
 // component handed to mountMenuOptions looks unsafe to it while vue-tsc

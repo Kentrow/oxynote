@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import type { FieldChange } from "./change-count"
 
 const props = defineProps<{

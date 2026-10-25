@@ -8,6 +8,7 @@ export interface GenericQueryTimeRange {
 	from: Date | string
 	to: Date | string
 	timeRangeKey: string // key representing a preset time range (for caching; local)
+	variableValues?: Record<string, string> // values of the variables the request references, sent in place of the stored ones
 }
 
 export interface GenericQueryParams extends GenericQueryTimeRange {
@@ -67,6 +68,20 @@ export function formatQueryTimeRange(timeRange?: {
 	if (timeRange?.to) {
 		params.to =
 			timeRange.to instanceof Date ? timeRange.to.toISOString() : timeRange.to
+	}
+
+	return params
+}
+
+// formatQueryVariableValues gives each variable value as a var-<key> query
+// parameter. The server uses it in place of the stored value.
+export function formatQueryVariableValues(
+	values?: Record<string, string>,
+): Record<string, string> {
+	const params: Record<string, string> = {}
+
+	for (const [key, value] of Object.entries(values ?? {})) {
+		params[`var-${key}`] = value
 	}
 
 	return params

@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import type { Node as PMNode } from "@tiptap/pm/model"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import { countNodeChanges } from "./change-count"
 import { DiffStatus } from "./position-map"
 

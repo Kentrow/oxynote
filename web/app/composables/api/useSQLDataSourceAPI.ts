@@ -1,8 +1,13 @@
 const SQL_QUERY_KEYS = {
 	metadata: (dataSourceId: string) =>
 		["sql", dataSourceId, "metadata"] as const,
-	labels: (dataSourceId: string, query: string, timeRange: string) =>
-		["sql", dataSourceId, "labels", query, timeRange] as const,
+	labels: (
+		dataSourceId: string,
+		query: string,
+		timeRange: string,
+		variableValues: Record<string, string>,
+	) =>
+		["sql", dataSourceId, "labels", query, timeRange, variableValues] as const,
 }
 
 export default function () {
@@ -48,6 +53,7 @@ export default function () {
 					toValue(dataSourceIdRef) || "",
 					toValue(paramsRef)?.q || "",
 					toValue(paramsRef)?.timeRangeKey || "",
+					toValue(paramsRef)?.variableValues ?? {},
 				),
 			query: async () => {
 				const dataSourceId = toValue(dataSourceIdRef)
@@ -60,6 +66,7 @@ export default function () {
 				const queryParams = new URLSearchParams({
 					q: params.q,
 					...formatQueryTimeRange(params),
+					...formatQueryVariableValues(params.variableValues),
 				})
 
 				return await $coreAPIClient<SQLLabelsResult>(

@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/oxynote/oxynote/server/core/internal/document"
-	"github.com/oxynote/oxynote/server/core/internal/search"
 	"github.com/rs/xid"
 )
 
@@ -22,17 +21,11 @@ var _ DB = &DBMock{}
 //
 //		// make and configure a mocked DB
 //		mockedDB := &DBMock{
-//			DeleteSearchJobFunc: func(ctx context.Context, id int64, version int64) error {
-//				panic("mock out the DeleteSearchJob method")
-//			},
 //			FetchDocumentBranchesUnsafeFunc: func(ctx context.Context, docID xid.ID) ([]document.BranchSummary, error) {
 //				panic("mock out the FetchDocumentBranchesUnsafe method")
 //			},
 //			FetchDocumentUnsafeByBranchIDFunc: func(ctx context.Context, branchID xid.ID) (*document.Document, error) {
 //				panic("mock out the FetchDocumentUnsafeByBranchID method")
-//			},
-//			FetchSearchJobsFunc: func(ctx context.Context, offsetID int64, limit int64) ([]search.Job, error) {
-//				panic("mock out the FetchSearchJobs method")
 //			},
 //		}
 //
@@ -41,29 +34,14 @@ var _ DB = &DBMock{}
 //
 //	}
 type DBMock struct {
-	// DeleteSearchJobFunc mocks the DeleteSearchJob method.
-	DeleteSearchJobFunc func(ctx context.Context, id int64, version int64) error
-
 	// FetchDocumentBranchesUnsafeFunc mocks the FetchDocumentBranchesUnsafe method.
 	FetchDocumentBranchesUnsafeFunc func(ctx context.Context, docID xid.ID) ([]document.BranchSummary, error)
 
 	// FetchDocumentUnsafeByBranchIDFunc mocks the FetchDocumentUnsafeByBranchID method.
 	FetchDocumentUnsafeByBranchIDFunc func(ctx context.Context, branchID xid.ID) (*document.Document, error)
 
-	// FetchSearchJobsFunc mocks the FetchSearchJobs method.
-	FetchSearchJobsFunc func(ctx context.Context, offsetID int64, limit int64) ([]search.Job, error)
-
 	// calls tracks calls to the methods.
 	calls struct {
-		// DeleteSearchJob holds details about calls to the DeleteSearchJob method.
-		DeleteSearchJob []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-			// ID is the id argument value.
-			ID int64
-			// Version is the version argument value.
-			Version int64
-		}
 		// FetchDocumentBranchesUnsafe holds details about calls to the FetchDocumentBranchesUnsafe method.
 		FetchDocumentBranchesUnsafe []struct {
 			// Ctx is the ctx argument value.
@@ -78,63 +56,9 @@ type DBMock struct {
 			// BranchID is the branchID argument value.
 			BranchID xid.ID
 		}
-		// FetchSearchJobs holds details about calls to the FetchSearchJobs method.
-		FetchSearchJobs []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-			// OffsetID is the offsetID argument value.
-			OffsetID int64
-			// Limit is the limit argument value.
-			Limit int64
-		}
 	}
-	lockDeleteSearchJob               sync.RWMutex
 	lockFetchDocumentBranchesUnsafe   sync.RWMutex
 	lockFetchDocumentUnsafeByBranchID sync.RWMutex
-	lockFetchSearchJobs               sync.RWMutex
-}
-
-// DeleteSearchJob calls DeleteSearchJobFunc.
-func (mock *DBMock) DeleteSearchJob(ctx context.Context, id int64, version int64) error {
-	callInfo := struct {
-		Ctx     context.Context
-		ID      int64
-		Version int64
-	}{
-		Ctx:     ctx,
-		ID:      id,
-		Version: version,
-	}
-	mock.lockDeleteSearchJob.Lock()
-	mock.calls.DeleteSearchJob = append(mock.calls.DeleteSearchJob, callInfo)
-	mock.lockDeleteSearchJob.Unlock()
-	if mock.DeleteSearchJobFunc == nil {
-		var (
-			errOut error
-		)
-		return errOut
-	}
-	return mock.DeleteSearchJobFunc(ctx, id, version)
-}
-
-// DeleteSearchJobCalls gets all the calls that were made to DeleteSearchJob.
-// Check the length with:
-//
-//	len(mockedDB.DeleteSearchJobCalls())
-func (mock *DBMock) DeleteSearchJobCalls() []struct {
-	Ctx     context.Context
-	ID      int64
-	Version int64
-} {
-	var calls []struct {
-		Ctx     context.Context
-		ID      int64
-		Version int64
-	}
-	mock.lockDeleteSearchJob.RLock()
-	calls = mock.calls.DeleteSearchJob
-	mock.lockDeleteSearchJob.RUnlock()
-	return calls
 }
 
 // FetchDocumentBranchesUnsafe calls FetchDocumentBranchesUnsafeFunc.
@@ -214,49 +138,5 @@ func (mock *DBMock) FetchDocumentUnsafeByBranchIDCalls() []struct {
 	mock.lockFetchDocumentUnsafeByBranchID.RLock()
 	calls = mock.calls.FetchDocumentUnsafeByBranchID
 	mock.lockFetchDocumentUnsafeByBranchID.RUnlock()
-	return calls
-}
-
-// FetchSearchJobs calls FetchSearchJobsFunc.
-func (mock *DBMock) FetchSearchJobs(ctx context.Context, offsetID int64, limit int64) ([]search.Job, error) {
-	callInfo := struct {
-		Ctx      context.Context
-		OffsetID int64
-		Limit    int64
-	}{
-		Ctx:      ctx,
-		OffsetID: offsetID,
-		Limit:    limit,
-	}
-	mock.lockFetchSearchJobs.Lock()
-	mock.calls.FetchSearchJobs = append(mock.calls.FetchSearchJobs, callInfo)
-	mock.lockFetchSearchJobs.Unlock()
-	if mock.FetchSearchJobsFunc == nil {
-		var (
-			jobsOut []search.Job
-			errOut  error
-		)
-		return jobsOut, errOut
-	}
-	return mock.FetchSearchJobsFunc(ctx, offsetID, limit)
-}
-
-// FetchSearchJobsCalls gets all the calls that were made to FetchSearchJobs.
-// Check the length with:
-//
-//	len(mockedDB.FetchSearchJobsCalls())
-func (mock *DBMock) FetchSearchJobsCalls() []struct {
-	Ctx      context.Context
-	OffsetID int64
-	Limit    int64
-} {
-	var calls []struct {
-		Ctx      context.Context
-		OffsetID int64
-		Limit    int64
-	}
-	mock.lockFetchSearchJobs.RLock()
-	calls = mock.calls.FetchSearchJobs
-	mock.lockFetchSearchJobs.RUnlock()
 	return calls
 }

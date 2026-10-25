@@ -2,7 +2,7 @@
 import { useEditor, EditorContent } from "@tiptap/vue-3"
 import { TrailingNode } from "@tiptap/extensions"
 import Typography from "@tiptap/extension-typography"
-import { cn } from "@/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import {
 	SlashCommands,
 	processSlashCommandTransaction,

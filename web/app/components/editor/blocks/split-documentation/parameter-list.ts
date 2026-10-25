@@ -7,7 +7,7 @@ import { SplitDocumentation } from "."
 import ParameterListItemHeaderTitleView from "./ParameterListItemHeaderTitle.vue"
 import ParameterListItemHeaderTypeView from "./ParameterListItemHeaderType.vue"
 import ParameterListItemHeaderView from "./ParameterListItemHeader.vue"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import { COMMENT_MARK_NAME } from "../../mark-names"
 import {
 	SPLIT_DOCUMENTATION_PARAMETER_LIST_NAME,

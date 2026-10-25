@@ -7,18 +7,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func Test_ColorHex(t *testing.T) {
+func Test_ValidColor(t *testing.T) {
 	t.Parallel()
 
-	assert.Equal(t, "#00a63e", ColorHex("green"))
-	assert.Empty(t, ColorHex("navy"))
-}
+	cc := map[string]struct {
+		Name   string
+		Result bool
+	}{
+		"Unknown name": {
+			Name: "navy",
+		},
+		"Palette hex": {
+			Name: "#00a63e",
+		},
+		"Uppercase palette name": {
+			Name: "Green",
+		},
+		"Palette name": {
+			Name:   "green",
+			Result: true,
+		},
+	}
 
-func Test_ColorName(t *testing.T) {
-	t.Parallel()
+	for cn, c := range cc {
+		t.Run(cn, func(t *testing.T) {
+			t.Parallel()
 
-	assert.Equal(t, "green", ColorName("#00a63e"))
-	assert.Empty(t, ColorName("#00A63E"))
+			assert.Equal(t, c.Result, ValidColor(c.Name))
+		})
+	}
 }
 
 func Test_ColorNames(t *testing.T) {

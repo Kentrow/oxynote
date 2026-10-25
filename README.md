@@ -12,6 +12,7 @@ go through a draft, a diff and an approval. From the authors of
 [![License](https://img.shields.io/github/license/oxynote/oxynote)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/oxynote/oxynote)](https://github.com/oxynote/oxynote/releases)
 [![CI](https://img.shields.io/github/check-runs/oxynote/oxynote/main?label=CI)](https://github.com/oxynote/oxynote/actions)
+[![Discord](https://img.shields.io/discord/1559252157826469988?label=Discord&logo=discord&logoColor=white&color=5865F2)](https://discord.gg/mNJd5zJkvC)
 
 </div>
 
@@ -214,3 +215,9 @@ are working on them.
 
 **Why the name?** Internally we first called this "breathing docs".
 Breathing needs oxygen, so oxy became the prefix, and note followed.
+
+## Community
+
+Join the [Discord](https://discord.gg/mNJd5zJkvC) to ask questions, share
+how you use Oxynote and talk with the people building it. Found a bug or
+have an idea? [Open an issue](https://github.com/oxynote/oxynote/issues).

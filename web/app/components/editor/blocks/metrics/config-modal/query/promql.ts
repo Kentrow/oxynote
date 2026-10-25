@@ -8,7 +8,16 @@ import type {
 	CompletionResult,
 	CompletionContext,
 } from "@codemirror/autocomplete"
-import { resolveTimeRange, TimeRangePreset } from "../../utils"
+import { parser } from "@prometheus-io/lezer-promql"
+import type { EditorState } from "@codemirror/state"
+import { resolveTimeRange } from "../../utils"
+import { TimeRangePreset } from "~/utils/time-range"
+import type { VariableTreeResponse } from "~/utils"
+import { referencedVariableValues } from "~/utils/variable"
+import {
+	TYPED_VARIABLE_PATTERN,
+	variableCompletions,
+} from "./variable-completion"
 
 const MATCHER_PROCESSING_DEBOUNCE_MS = 700
 const PROMQL_DURATION_UNITS = new Set(["ms", "s", "m", "h", "d", "w", "y"])
@@ -62,6 +71,39 @@ function bracketContext(ctx: CompletionContext) {
 	return { open, from, to, token }
 }
 
+// acceptsVariable tells whether the grammar takes a variable in place of
+// the text between from and to. It parses the query with a stand-in
+// variable there: a slot that takes a value, a label name or a metric name
+// parses it, while a keyword or an operator position turns it into an
+// error. A string takes any text, so it takes a variable too.
+function acceptsVariable(state: EditorState, from: number, to: number) {
+	const probe = `${state.sliceDoc(0, from)}$x${state.sliceDoc(to)}`
+	const node = parser.parse(probe).resolveInner(from + 1, 1)
+	if (node.name === "StringLiteral") {
+		return true
+	}
+
+	return node.name === "VariableReference" && !node.parent?.type.isError
+}
+
+// variableSlot is where a variable would go at the cursor: over the $key
+// typed so far, or at the cursor before anything is typed. Null when the
+// cursor is in the middle of another word or the grammar has no place for
+// a variable there.
+function variableSlot(ctx: CompletionContext) {
+	const typed = ctx.matchBefore(TYPED_VARIABLE_PATTERN)
+	if (!typed && ctx.matchBefore(/[\w:]+$/)) {
+		return null
+	}
+
+	const from = typed?.from ?? ctx.pos
+	if (!acceptsVariable(ctx.state, from, ctx.pos)) {
+		return null
+	}
+
+	return { from: from, typed: !!typed }
+}
+
 function mergeDedupByLabel(...lists: (readonly Completion[])[]) {
 	const seen = new Set<string>()
 	const res: Completion[] = []
@@ -82,21 +124,40 @@ function mergeDedupByLabel(...lists: (readonly Completion[])[]) {
 function makeWrappedCompleteStrategy(
 	base: CompleteStrategy,
 	t: (key: string) => string,
+	variables: MaybeRefOrGetter<VariableTreeResponse>,
 ): CompleteStrategy {
 	return {
 		promQL: async (
 			ctx: CompletionContext,
 		): Promise<CompletionResult | null> => {
 			const res = await base.promQL(ctx)
+			const slot = variableSlot(ctx)
+			const variableOptions = slot
+				? variableCompletions(toValue(variables), t)
+				: []
+			const bc = bracketContext(ctx)
+
+			// a typed $key only ever matches a variable, so the variables
+			// replace whatever the base offers for the same text
+			if (!bc && slot?.typed) {
+				return {
+					from: slot.from,
+					to: ctx.pos,
+					options: variableOptions,
+					validFor: TYPED_VARIABLE_PATTERN,
+				}
+			}
+
 			if (!res) {
 				return res
 			}
 
-			const bc = bracketContext(ctx)
-
-			// Outside [...] → return PromQL results unchanged
+			// Outside [...] → return PromQL results with the variables added
 			if (!bc) {
-				return res
+				return {
+					...res,
+					options: mergeDedupByLabel(res.options, variableOptions),
+				}
 			}
 
 			// never allow unit-only duration suffix completions inside [...]
@@ -116,7 +177,7 @@ function makeWrappedCompleteStrategy(
 				...res,
 				from: bc.from, // keep tooltip anchored correctly inside [...]
 				to: bc.to,
-				options: mergeDedupByLabel(presets, filtered),
+				options: mergeDedupByLabel(presets, variableOptions, filtered),
 				validFor: /^[\w$]*$/,
 			}
 		},
@@ -128,6 +189,7 @@ export function usePromQLQueryExtension(
 	dataSourceId: MaybeRefOrGetter<string | null | undefined>,
 	timeRange: MaybeRefOrGetter<TimeRangePreset | null | undefined>,
 	enable: MaybeRefOrGetter<boolean>,
+	variables: MaybeRefOrGetter<VariableTreeResponse>,
 ) {
 	const {
 		usePrometheusMetadata,
@@ -164,6 +226,18 @@ export function usePromQLQueryExtension(
 		enable,
 	)
 
+	// a lookup sends the values of the variables its matchers reference,
+	// for the server to substitute
+	function withVariableValues<T extends { matchers?: string[] }>(params: T): T {
+		return {
+			...params,
+			variableValues: referencedVariableValues(
+				toValue(variables),
+				params.matchers ?? [],
+			),
+		}
+	}
+
 	const basePromQL = newCompleteStrategy({
 		remote: new PrometheusDataSourceClient({
 			timeRangeFn: () => {
@@ -179,7 +253,7 @@ export function usePromQLQueryExtension(
 				)
 			},
 			labelNamesFn: async (params: PrometheusLabelParams) => {
-				lastFetchPrometheusLabelsParams.value = params
+				lastFetchPrometheusLabelsParams.value = withVariableValues(params)
 				return (
 					(await fetchPrometheusLabels.refresh()).data ?? {
 						result: [],
@@ -187,7 +261,7 @@ export function usePromQLQueryExtension(
 				)
 			},
 			labelValuesFn: async (params: PrometheusLabelValuesParams) => {
-				lastFetchPrometheusLabelValuesParams.value = params
+				lastFetchPrometheusLabelValuesParams.value = withVariableValues(params)
 				return (
 					(await fetchPrometheusLabelValues.refresh()).data ?? {
 						result: [],
@@ -195,7 +269,7 @@ export function usePromQLQueryExtension(
 				)
 			},
 			seriesFn: async (params: PrometheusSeriesParams) => {
-				lastFetchPrometheusSeriesParams.value = params
+				lastFetchPrometheusSeriesParams.value = withVariableValues(params)
 				return (
 					(await fetchPrometheusSeries.refresh()).data ?? {
 						result: [],
@@ -210,7 +284,11 @@ export function usePromQLQueryExtension(
 			new PromQLExtension()
 				.activateLinter(false)
 				.setComplete({
-					completeStrategy: makeWrappedCompleteStrategy(basePromQL, t),
+					completeStrategy: makeWrappedCompleteStrategy(
+						basePromQL,
+						t,
+						variables,
+					),
 				})
 				.asExtension(),
 		]),
@@ -222,6 +300,7 @@ export function usePromQLLegendExtension(
 	dataSourceId: MaybeRefOrGetter<string | null | undefined>,
 	timeRange: MaybeRefOrGetter<TimeRangePreset | null | undefined>,
 	enable: MaybeRefOrGetter<boolean>,
+	variables: MaybeRefOrGetter<VariableTreeResponse>,
 ) {
 	const matchers = computed(() => {
 		const q = toValue(query)?.trim()
@@ -254,6 +333,10 @@ export function usePromQLLegendExtension(
 				to: resolvedTimeRange.to,
 				timeRangeKey: timeRangeVal,
 				matchers: debouncedMatchers.value,
+				variableValues: referencedVariableValues(
+					toValue(variables),
+					debouncedMatchers.value,
+				),
 			}
 		},
 		enable,
@@ -275,6 +358,10 @@ export function usePromQLLegendExtension(
 				to: resolvedTimeRange.to,
 				timeRangeKey: timeRangeVal,
 				matchers: debouncedMatchers.value,
+				variableValues: referencedVariableValues(
+					toValue(variables),
+					debouncedMatchers.value,
+				),
 			}
 		},
 		enable,

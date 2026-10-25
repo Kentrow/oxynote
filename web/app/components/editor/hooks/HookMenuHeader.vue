@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import {
 	HOOK_STATUS_DOT_CLASS,
 	HOOK_STATUS_PILL_CLASS,

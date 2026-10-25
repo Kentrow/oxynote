@@ -2,8 +2,7 @@
 import { nodeViewProps, NodeViewWrapper } from "@tiptap/vue-3"
 import type { JSONContent } from "@tiptap/core"
 import VisualizationContainer from "./VisualizationContainer.vue"
-import { cn } from "~/lib/utils"
-import PopoverConfigBox from "./PopoverConfigBox.vue"
+import { cn } from "#layers/ui/app/lib/utils"
 import {
 	type MetricConfig,
 	MetricBlockWidth,
@@ -327,6 +326,17 @@ watch(
 	},
 )
 
+function openModal() {
+	// select this node first. Otherwise the page jumps when the editor
+	// regains focus after the modal closes.
+	const pos = props.getPos()
+	if (typeof pos === "number") {
+		props.editor.commands.setNodeSelection(pos)
+	}
+
+	editorStore.activateMetricBlockConfig(props.node.attrs.uid as string)
+}
+
 function disableVisualizationRefreshTemporarily() {
 	disableVisualizationRefresh.value = true
 	void nextTick(() => {
@@ -354,64 +364,60 @@ function disableVisualizationRefreshTemporarily() {
 		:data-node-comment-id="props.node.attrs.nodeCommentId"
 		:data-diff-status="props.node.attrs.diffStatus"
 	>
-		<ShadcnUiPopover>
-			<div class="relative size-full">
-				<div
-					v-if="lastOtherEditingUser"
-					:class="
-						cn(
-							'pointer-events-none absolute -top-4 -left-px z-5 rounded-sm px-[0.1rem] text-xs font-medium whitespace-nowrap text-white caret-transparent select-none',
-						)
-					"
-					:style="{
-						backgroundColor: lastOtherEditingUser?.color ?? undefined,
-					}"
-				>
-					{{ lastOtherEditingUser.name }}
-				</div>
-				<div
-					class="absolute top-1 right-1.5 z-1 flex items-center rounded-md bg-background has-[>:not(button)]:pl-0.5"
-				>
-					<DiffChangeMarker :node="props.node" class="mr-1">
-						<MetricDiffDetails :node="props.node" />
-					</DiffChangeMarker>
-					<ShadcnUiTooltip v-if="simulationVisible">
-						<ShadcnUiTooltipTrigger as-child>
-							<Icon
-								name="mingcute:test-tube-line"
-								class="size-3.5 text-foreground"
-							/>
-						</ShadcnUiTooltipTrigger>
-						<ShadcnUiTooltipContent side="bottom">
-							{{ $t("editor.metrics.simulation.tooltip") }}
-						</ShadcnUiTooltipContent>
-					</ShadcnUiTooltip>
-					<ShadcnUiPopoverTrigger as-child>
-						<ShadcnUiButton
-							variant="ghost-plain"
-							size="icon-sm"
-							:class="cn('size-6')"
-						>
-							<Icon name="lucide:settings" />
-						</ShadcnUiButton>
-					</ShadcnUiPopoverTrigger>
-				</div>
-				<VisualizationContainer
-					:config="config"
-					:uid="props.node.attrs.uid"
-					:disable-refresh="disableVisualizationRefresh"
-					@simulate="(preset) => (config.simulationPreset = preset)"
-					@simulation-visible="(v) => (simulationVisible = v)"
-				/>
+		<div class="relative size-full">
+			<div
+				v-if="lastOtherEditingUser"
+				:class="
+					cn(
+						'pointer-events-none absolute -top-4 -left-px z-5 rounded-sm px-[0.1rem] text-xs font-medium whitespace-nowrap text-white caret-transparent select-none',
+					)
+				"
+				:style="{
+					backgroundColor: lastOtherEditingUser?.color ?? undefined,
+				}"
+			>
+				{{ lastOtherEditingUser.name }}
 			</div>
-			<ShadcnUiPopoverContent class="w-50" side="right" side-flip align="start">
-				<PopoverConfigBox
-					v-model="config"
-					:uid="props.node.attrs.uid"
-					:editor="props.editor"
-					:get-pos="props.getPos"
-				/>
-			</ShadcnUiPopoverContent>
-		</ShadcnUiPopover>
+			<div
+				class="absolute top-1 right-1.5 z-1 flex items-center rounded-md bg-background has-[>:not(button)]:pl-0.5"
+			>
+				<DiffChangeMarker :node="props.node" class="mr-1">
+					<MetricDiffDetails :node="props.node" />
+				</DiffChangeMarker>
+				<ShadcnUiTooltip v-if="simulationVisible">
+					<ShadcnUiTooltipTrigger as-child>
+						<Icon
+							name="mingcute:test-tube-line"
+							class="size-3.5 text-foreground"
+						/>
+					</ShadcnUiTooltipTrigger>
+					<ShadcnUiTooltipContent side="bottom">
+						{{ $t("editor.metrics.simulation.tooltip") }}
+					</ShadcnUiTooltipContent>
+				</ShadcnUiTooltip>
+				<ShadcnUiButton
+					variant="ghost-plain"
+					size="icon-sm"
+					:class="cn('size-6')"
+					@click="openModal"
+				>
+					<Icon name="lucide:settings" />
+					<span class="sr-only">
+						{{
+							!isEditingDisabled
+								? $t("editor.metrics.config.modal-trigger-button-normal")
+								: $t("editor.metrics.config.modal-trigger-button-readonly")
+						}}
+					</span>
+				</ShadcnUiButton>
+			</div>
+			<VisualizationContainer
+				:config="config"
+				:uid="props.node.attrs.uid"
+				:disable-refresh="disableVisualizationRefresh"
+				@simulate="(preset) => (config.simulationPreset = preset)"
+				@simulation-visible="(v) => (simulationVisible = v)"
+			/>
+		</div>
 	</NodeViewWrapper>
 </template>

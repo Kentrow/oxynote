@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	documentCore "github.com/oxynote/oxynote/server/core/internal/document"
 	"github.com/oxynote/oxynote/server/core/internal/server/internal/auth"
 	tagCore "github.com/oxynote/oxynote/server/core/internal/tag"
 	"github.com/oxynote/oxynote/server/core/pkg/httpserver"
@@ -118,6 +119,47 @@ func (h *Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 	httpserver.Respond(h.log, w, t, http.StatusCreated)
 }
 
+// UpdateTag handles renaming or recolouring an existing tag.
+func (h *Handler) UpdateTag(w http.ResponseWriter, r *http.Request) {
+	session, ok := auth.RequireSession(h.log, w, r)
+	if !ok {
+		return
+	}
+
+	tagID, err := httpserver.ExtractNamedID(r, "tagId")
+	if err != nil {
+		httpserver.RespondError(h.log, w, err)
+		return
+	}
+
+	var inp tagCore.UpdateInput
+
+	if err = httpserver.DecodeJSON(r, &inp); err != nil {
+		httpserver.RespondError(h.log, w, err)
+		return
+	}
+
+	if err = inp.Validate(); err != nil {
+		httpserver.RespondError(h.log, w, err)
+		return
+	}
+
+	err = h.db.UpdateTag(
+		r.Context(),
+		session.ActiveOrganizationID,
+		tagID,
+		inp,
+	)
+	if err != nil {
+		httpserver.RespondError(h.log, w, err)
+		return
+	}
+
+	h.NotifyTreeChange(session.ActiveOrganizationID)
+
+	httpserver.Respond(h.log, w, nil, http.StatusNoContent)
+}
+
 // SetTagVisibility handles whether the caller keeps a tag out of their own
 // sidebar. Nobody else's tree changes, so only the caller is told.
 func (h *Handler) SetTagVisibility(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +264,17 @@ func (h *Handler) AssignBranchTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	doc, err := h.db.FetchDocumentByBranchID(r.Context(), branchID, session.ActiveOrganizationID)
+	if err != nil {
+		httpserver.RespondError(h.log, w, err)
+		return
+	}
+
+	if err = doc.AllowsDocumentChange(); err != nil {
+		httpserver.RespondError(h.log, w, err)
+		return
+	}
+
 	err = h.db.AssignBranchTag(r.Context(), session.ActiveOrganizationID, documentID, branchID, inp.TagID)
 	if err != nil {
 		httpserver.RespondError(h.log, w, err)
@@ -249,6 +302,17 @@ func (h *Handler) UnassignBranchTag(w http.ResponseWriter, r *http.Request) {
 
 	tagID, err := httpserver.ExtractNamedID(r, "tagId")
 	if err != nil {
+		httpserver.RespondError(h.log, w, err)
+		return
+	}
+
+	doc, err := h.db.FetchDocumentByBranchID(r.Context(), branchID, session.ActiveOrganizationID)
+	if err != nil {
+		httpserver.RespondError(h.log, w, err)
+		return
+	}
+
+	if err = doc.AllowsDocumentChange(); err != nil {
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
@@ -298,6 +362,10 @@ type DB interface {
 	// InsertTag should store a new tag at the end of its organization's tags.
 	InsertTag(ctx context.Context, t tagCore.Tag) error
 
+	// UpdateTag should rename or recolour a tag in the organization,
+	// preserving its assignments and any field left unset.
+	UpdateTag(ctx context.Context, organizationID string, id xid.ID, inp tagCore.UpdateInput) error
+
 	// SetTagVisibility should record whether one user keeps a tag out of
 	// their sidebar, leaving every other user's view untouched.
 	SetTagVisibility(
@@ -321,4 +389,8 @@ type DB interface {
 	// UnassignBranchTag should stop a document's branch carrying a tag.
 	// Removing a tag the branch does not carry should change nothing.
 	UnassignBranchTag(ctx context.Context, organizationID string, documentID, branchID, tagID xid.ID) error
+
+	// FetchDocumentByBranchID should fetch a document joined against the
+	// branch identified by branchID.
+	FetchDocumentByBranchID(ctx context.Context, branchID xid.ID, organizationID string) (*documentCore.Document, error)
 }

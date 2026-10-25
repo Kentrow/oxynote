@@ -3,7 +3,7 @@
   "name": "io.github.oxynote/oxynote",
   "title": "Oxynote",
   "description": "Self-hosted team docs with live Prometheus charts. Read, write and query your docs over MCP.",
-  "version": "0.8.4",
+  "version": "0.9.0",
   "repository": {
     "url": "https://github.com/oxynote/oxynote",
     "source": "github",

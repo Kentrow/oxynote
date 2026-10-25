@@ -16,6 +16,7 @@ export default {
 
 		if (to.name === "document-editor" && to.hash) {
 			const pageReady = usePageReady()
+			const router = useRouter()
 			let rawHash = to.hash.replace(/^#/, "")
 			if (!rawHash) {
 				return { left: 0, top: 0 }
@@ -34,7 +35,18 @@ export default {
 			const targetEl = await waitForHtmlElementById(rawHash, SCROLL_MAX_WAIT_MS)
 			if (targetEl) {
 				requestAnimationFrame(() => {
-					highlightTiptapScrollElement(rawHash, targetEl)
+					highlightTiptapScrollElement(rawHash, targetEl, () => {
+						const route = router.currentRoute.value
+						if (route.hash !== to.hash) {
+							return
+						}
+
+						void router.replace({
+							path: route.path,
+							query: route.query,
+							hash: "",
+						})
+					})
 				})
 
 				return {

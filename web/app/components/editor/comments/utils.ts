@@ -1,4 +1,4 @@
-import { cn } from "@/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import Document from "@tiptap/extension-document"
 import type { Editor } from "@tiptap/core"
 import {

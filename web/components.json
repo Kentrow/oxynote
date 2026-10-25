@@ -4,7 +4,7 @@
 	"typescript": true,
 	"tailwind": {
 		"config": "",
-		"css": "app/assets/css/main.css",
+		"css": "layers/ui/app/assets/css/ui.css",
 		"baseColor": "neutral",
 		"cssVariables": true,
 		"prefix": ""
@@ -12,9 +12,9 @@
 	"aliases": {
 		"components": "@/components",
 		"composables": "@/composables",
-		"utils": "@/lib/utils",
-		"ui": "@/components/shadcn/ui",
-		"lib": "@/lib"
+		"utils": "#layers/ui/app/lib/utils",
+		"ui": "#layers/ui/app/components/shadcn/ui",
+		"lib": "#layers/ui/app/lib"
 	},
 	"iconLibrary": "lucide"
 }

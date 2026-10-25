@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 
 const props = defineProps<{
 	shortcut?: {
@@ -15,10 +15,22 @@ const { osType } = useDetectHost()
 const isOpen = ref(false)
 let hoverTimeout: ReturnType<typeof setTimeout> | null = null
 
-function handlePointerEnter() {
-	hoverTimeout = setTimeout(() => {
-		isOpen.value = true
-	}, 800)
+// a part of the trigger with a tooltip of its own, such as a count, keeps
+// this one closed while the pointer is over it
+function handlePointerOver(event: PointerEvent) {
+	const onOwnTooltip =
+		event.target instanceof Element &&
+		!!event.target.closest("[data-own-tooltip]")
+	if (onOwnTooltip) {
+		handlePointerLeave()
+		return
+	}
+
+	if (!hoverTimeout && !isOpen.value) {
+		hoverTimeout = setTimeout(() => {
+			isOpen.value = true
+		}, 800)
+	}
 }
 
 function handlePointerLeave() {
@@ -34,7 +46,7 @@ function handlePointerLeave() {
 	<ShadcnUiTooltip v-if="props.shortcut" :open="isOpen">
 		<ShadcnUiTooltipTrigger
 			as-child
-			@pointerenter="handlePointerEnter"
+			@pointerover="handlePointerOver"
 			@pointerleave="handlePointerLeave"
 		>
 			<slot />

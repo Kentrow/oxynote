@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { nodeViewProps, NodeViewWrapper, NodeViewContent } from "@tiptap/vue-3"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 
 defineProps(nodeViewProps)
 </script>

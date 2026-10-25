@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import DiffCountPill from "../diff/DiffCountPill.vue"
 import { DiffStatus } from "../diff/position-map"
 import { hookChangeCount, type HookDiffContext } from "./hook-diff"

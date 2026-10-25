@@ -21,6 +21,10 @@
 					"label": "Toggle inbox",
 					"description": "Opens and closes the inbox beside the sidebar. Works anywhere in the workspace."
 				},
+				"toggle-variables": {
+					"label": "Toggle variables",
+					"description": "Opens and closes the variables beside the sidebar. While you edit variables it stays open."
+				},
 				"search-for-documents": {
 					"label": "Open search",
 					"description": "Opens page search. Press again to close."
@@ -156,6 +160,7 @@
 			"search-for-documents": "Search for pages",
 			"create-new-document": "Create new pages",
 			"toggle-inbox": "Open/close inbox",
+			"toggle-variables": "Open/close variables",
 			"toggle-settings": "Open/close settings",
 			"toggle-shortcuts": "Open/close keyboard shortcuts",
 			"add-params-to-split-doc-left-side": "Add parameters",

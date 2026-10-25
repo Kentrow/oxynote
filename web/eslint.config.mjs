@@ -150,8 +150,8 @@ export default withNuxt([
 						"/^editor\\.hooks\\.scheduled-reminder\\.(duration|when|remind-again)-options\\./",
 						"/^editor\\.metrics\\.config\\.modal-title-diff-/",
 						"/^editor\\.metrics\\.config\\.query-placeholder\\./",
-						"/^editor\\.metrics\\.config\\.refresh-interval-options(-short)?\\./",
-						"/^editor\\.metrics\\.config\\.time-range-options\\./",
+						"/^general\\.refresh-interval-options(-short)?\\./",
+						"/^general\\.time-range-options\\./",
 						"/^editor\\.metrics\\.config\\.unit-options\\./",
 						"/^editor\\.metrics\\.simulation\\.preset-options\\./",
 						"/^editor\\.navbar\\.document-modes\\./",
@@ -181,7 +181,7 @@ export default withNuxt([
 	// their hardcoded sr-only strings are not project translation targets
 	{
 		name: "oxynote/vue-i18n/shadcn",
-		files: ["app/components/shadcn/ui/**"],
+		files: ["layers/ui/app/components/shadcn/ui/**"],
 		rules: {
 			"@intlify/vue-i18n/no-raw-text": "off",
 		},
@@ -194,7 +194,7 @@ export default withNuxt([
 	// nothing for a keyboard to reach.
 	{
 		name: "oxynote/vue-a11y/shadcn",
-		files: ["app/components/shadcn/ui/**"],
+		files: ["layers/ui/app/components/shadcn/ui/**"],
 		rules: {
 			"vuejs-accessibility/click-events-have-key-events": "off",
 			"vuejs-accessibility/form-control-has-label": "off",

@@ -1,0 +1,114 @@
+{
+	"variable": {
+		"title": "Variables",
+		"sheet-description": "Values that pages reference by key, and the ones you set for them",
+		"intro": {
+			"normal": "Pages use these values by their key, for example in metric charts and queries. The values you pick here apply only to you.",
+			"edit": "Groups and variables are shared with everyone. Only their values are personal."
+		},
+		"by-page-tooltip": {
+			"on-now": "Variables used on this page are shown first, in their own section.",
+			"on-click": "Click to list all variables together.",
+			"off-now": "All variables are listed together.",
+			"off-click": "Click to show the ones used on this page first."
+		},
+		"actions": {
+			"edit": "Edit variables and groups",
+			"done": "Done",
+			"close": "Close variables",
+			"reset": "Reset",
+			"add-variable": "Add variable",
+			"add-group": "Add group",
+			"open-variable": "Edit variable {name}",
+			"rename-group": "Rename group {name}",
+			"back": "Back",
+			"save": "Save",
+			"create": "Create",
+			"cancel": "Cancel",
+			"show-one-list": "Show all variables in one list",
+			"show-by-page": "Show this page's variables first"
+		},
+		"sections": {
+			"on-this-page": "On this page",
+			"other": "Other",
+			"used-on-other-pages": "Used on other pages"
+		},
+		"builtin": {
+			"tag": "Built-in",
+			"tag-hint": "These variables are always present and available on every page",
+			"form-notice": "Metric charts can follow this built-in variable instead of a fixed setting. Name, key, group and type can't change, but the default value can."
+		},
+		"empty": {
+			"builtin-only-title": "No variables of your own yet",
+			"builtin-only-description": "Add your own to reuse a value such as an environment, a region or a release across pages.",
+			"builtin-only-action": "Create more variables",
+			"no-groups-title": "No groups of your own yet",
+			"no-groups-description": "Groups keep related variables together under one color.",
+			"group": "No variables yet"
+		},
+		"variable-form": {
+			"new-title": "New variable",
+			"edit-title": "Edit variable",
+			"name-label": "Name",
+			"name-required": "Enter a name",
+			"key-label": "Key",
+			"key-required": "Enter a key",
+			"key-hint": "Reference it in queries and text as {reference}",
+			"key-invalid": "Start with a letter and use only lowercase letters, digits and underscores",
+			"key-taken": "{reference} is already in use",
+			"group-label": "Group",
+			"group-required": "Pick a group",
+			"type-label": "Type",
+			"options-label": "Options",
+			"options-required": "Add at least one option",
+			"options-hint": "The first option is the default. Drag to reorder.",
+			"option-default": "Default",
+			"add-option": "Add option",
+			"remove-option": "Remove {value}",
+			"default-label": "Default value",
+			"default-required": "Enter a default value",
+			"default-empty-hint": "Used when the field is left empty",
+			"default-preset-hint": "Preselected for everyone",
+			"delete-button": "Delete variable",
+			"delete-hint": "References on pages will show as {reference}"
+		},
+		"group-form": {
+			"new-title": "New group",
+			"edit-title": "Edit group",
+			"name-label": "Name",
+			"name-placeholder": "Group name",
+			"name-required": "Enter a name",
+			"name-taken": "Another group already uses this name",
+			"color-button": "Pick the group color",
+			"delete-button": "Delete group",
+			"delete-blocked-hint": "Move or delete its variable first | Move or delete its {count} variables first",
+			"delete-clean-hint": "It has no variables, so it can be deleted cleanly"
+		},
+		"deletion-modal": {
+			"variable-title": "Delete variable",
+			"variable-description": "{name} will be deleted for everyone. References on pages will show as {reference}.",
+			"variable-confirm-button": "Delete variable",
+			"group-title": "Delete group",
+			"group-empty": "{name} has no variables, so it can be deleted cleanly.",
+			"group-blocked": "{name} still holds {count} variable. Move or delete it before you delete the group. | {name} still holds {count} variables. Move or delete them before you delete the group.",
+			"group-confirm-button": "Delete group",
+			"cancel-button": "Cancel"
+		},
+		"editing-toast": {
+			"title": "Your variables aren't saved yet",
+			"description": "Finish editing them before you open the inbox."
+		},
+		"toasts": {
+			"deleted": "{name} was deleted"
+		},
+		"errors": {
+			"load-failed": "Couldn't load the variables",
+			"value-failed": "Couldn't save your value",
+			"save-failed": "Couldn't save the variable",
+			"delete-failed": "Couldn't delete the variable",
+			"group-save-failed": "Couldn't save the group",
+			"group-delete-failed": "Couldn't delete the group",
+			"move-failed": "Couldn't move it there"
+		}
+	}
+}

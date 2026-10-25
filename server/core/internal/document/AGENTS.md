@@ -73,16 +73,15 @@ request handler:
 
 ## Search
 
-- **Jobs apply in order per document**; a failed diff holds back every later
-  one for that document, and an org removal holds everything after it.
+- **A search job names a scope, not a change**: a branch, a document or an
+  org (`search.Job`). Applying it re-reads the scope's current rows, so jobs
+  may run in any order or repeat. Every branch or document change queues
+  one through the search manager's `Enqueue` in the same transaction
+  (persist, fork, rename, merge, delete); document deletion queues one per
+  id that `agent.DeleteDocument` returns.
 - **Entries are branch-scoped**: id `<branchId>-<blockUid>`
   (`<branchId>-docname` for the name), carrying `documentId`, `branchId`,
-  `branchName`, `branchDefault`. Every branch change queues its diff through
-  `search.Jobs` in the same transaction (persist, fork, rename, merge);
-  branch deletion queues a `RemovedBranches` removal, document deletion
-  clears by `documentId` using the subtree ids `agent.DeleteDocument`
-  returns. Index settings are sent only when they differ from the index;
-  every write task is awaited.
+  `branchName`, `branchDefault`.
 
 ## Tags
 

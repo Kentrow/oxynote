@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { nodeViewProps } from "@tiptap/vue-3"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import {
 	defaultExtendedCodeBlockLanguage,
 	extendedCodeBlockLanguageOptions,

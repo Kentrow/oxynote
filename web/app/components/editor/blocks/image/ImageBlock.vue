@@ -2,7 +2,7 @@
 import { nodeViewProps, NodeViewWrapper } from "@tiptap/vue-3"
 import { nanoid } from "nanoid"
 import { showToastMessage } from "~/components/toast"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import { DiffStatus } from "~/components/editor/diff/position-map"
 import DiffChangeMarker from "~/components/editor/diff/DiffChangeMarker.vue"
 import ImageDiffDetails from "./ImageDiffDetails.vue"

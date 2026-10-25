@@ -14,6 +14,7 @@ import (
 	datasourceCore "github.com/oxynote/oxynote/server/core/internal/datasource"
 	"github.com/oxynote/oxynote/server/core/internal/datasource/processor"
 	"github.com/oxynote/oxynote/server/core/internal/document"
+	"github.com/oxynote/oxynote/server/core/internal/variable"
 	"github.com/oxynote/oxynote/server/core/pkg/errutil"
 	"github.com/oxynote/oxynote/server/core/pkg/memkit"
 	"github.com/oxynote/oxynote/server/core/pkg/timeutil"
@@ -106,7 +107,8 @@ type Checker struct {
 	// log is the component logger.
 	log *slog.Logger
 
-	// db reads the data source the block names.
+	// db reads the data source the block names and the variables its
+	// queries reference.
 	db DB
 
 	// runners hands out the client that speaks to a data source.
@@ -206,13 +208,29 @@ func (c *Checker) checkMetricActive(
 		return false
 	}
 
+	queries := extractQueries(block)
+	timeRange := block.Attrs.Get(document.AttrTimeRange).String()
+
+	// the probe acts for no user, so every variable takes its default.
+	if variable.HasReference(queries...) || variable.HasReference(timeRange) {
+		vars, verr := c.db.FetchVariableTree(ctx, organizationID, "")
+		if verr != nil {
+			c.log.DebugContext(ctx, "cannot fetch the variables the block references", "error", verr)
+
+			return false
+		}
+
+		queries = vars.Substitute(nil, queries...)
+		timeRange = vars.Substitute(nil, timeRange)[0]
+	}
+
 	now := timeutil.Now()
-	tr := processor.TimeRange{From: now.Add(-probeSpan(block)), To: now}
+	tr := processor.TimeRange{From: now.Add(-probeSpan(timeRange)), To: now}
 
 	// the probe transforms as a gauge because that shape accepts every
 	// result a source can answer with, scalar, vector and matrix alike,
 	// and only asks whether anything came back, not how it would be drawn.
-	for _, q := range extractQueries(block) {
+	for _, q := range queries {
 		res, qerr := datasourceCore.Query(ctx, c.runners.Runner(*ds), q, tr, processor.ChartTypeGauge)
 		if qerr != nil {
 			c.log.DebugContext(ctx, "the block's query did not answer", "error", qerr)
@@ -308,18 +326,8 @@ func simulated(block document.Block) bool {
 	return block.Attrs.Get(document.AttrSimulationActive).Bool()
 }
 
-// probeSpan reads how far back the block's window reaches.
-func probeSpan(block document.Block) time.Duration {
-	raw, ok := block.Attrs.Value(document.AttrTimeRange)
-	if !ok {
-		return _defaultProbeSpan
-	}
-
-	preset, isString := raw.(string)
-	if !isString {
-		return _defaultProbeSpan
-	}
-
+// probeSpan returns how far back the time range preset reaches.
+func probeSpan(preset string) time.Duration {
 	span, known := _probeSpans[preset]
 	if !known {
 		return _defaultProbeSpan
@@ -364,6 +372,11 @@ type DB interface {
 	// FetchDataSource should retrieve a data source by ID and
 	// organization ID.
 	FetchDataSource(ctx context.Context, id xid.ID, organizationID string) (*datasourceCore.DataSource, error)
+
+	// FetchVariableTree should return the organization's variables, each
+	// with the value the user set. An empty user sets none, so every
+	// variable takes its default.
+	FetchVariableTree(ctx context.Context, organizationID, userID string) (variable.Tree, error)
 }
 
 // Runners hands out the runner for a data source. The datasource

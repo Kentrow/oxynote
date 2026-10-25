@@ -6,9 +6,9 @@ import { stubChartColorContext } from "./test-helpers"
 import {
 	MetricBlockWidth,
 	MetricSimulationPreset,
-	TimeRangePreset,
 	type MetricConfig,
 } from "./utils"
+import { TimeRangePreset } from "~/utils/time-range"
 import {
 	makeEditor,
 	makeNode,
@@ -21,7 +21,12 @@ import {
 	disposeMockEndpoints,
 	makeXid,
 } from "~/composables/api/test-helpers"
-import { emitFrom, renderedIconNames, t } from "~/components/test-helpers"
+import {
+	emitFrom,
+	findButtonByText,
+	renderedIconNames,
+	t,
+} from "~/components/test-helpers"
 
 // echarts measures text on a canvas, which happy-dom does not implement
 vi.mock("./visualizations/LineChart.vue", () => ({
@@ -54,6 +59,7 @@ function makeMetricEditor(
 	options: {
 		nodeAtPos?: { attrs: Record<string, unknown> } | null
 		editing?: { uid: string; name: string; color: string } | null
+		setNodeSelection?: (pos: number) => void
 	} = {},
 ) {
 	const states = new Map<number, Record<string, unknown>>([[1, {}]])
@@ -66,6 +72,9 @@ function makeMetricEditor(
 	}
 
 	return makeEditor({
+		commands: {
+			setNodeSelection: options.setNodeSelection ?? (() => undefined),
+		},
 		state: {
 			doc: {
 				nodeAt: () =>
@@ -89,6 +98,7 @@ function mountBlock(
 		getPos?: () => number | undefined
 		nodeAtPos?: { attrs: Record<string, unknown> } | null
 		editing?: { uid: string; name: string; color: string } | null
+		setNodeSelection?: (pos: number) => void
 		underTooltipProvider?: boolean
 	} = {},
 ) {
@@ -103,6 +113,7 @@ function mountBlock(
 			nodeAtPos:
 				"nodeAtPos" in options ? options.nodeAtPos : { attrs: { uid: uid } },
 			editing: options.editing,
+			setNodeSelection: options.setNodeSelection,
 		}).editor,
 		getPos: options.getPos ?? (() => 5),
 		updateAttributes: options.updateAttributes ?? (() => undefined),
@@ -129,6 +140,7 @@ describe("<MetricMainBlock>", { concurrent: false }, () => {
 		useEditorStore().setReviewableDiffActive(false)
 		useEditorStore().updateActiveDocumentId(DOCUMENT_ID)
 		useEditorStore().updateActiveBranchId(BRANCH_ID)
+		useEditorStore().activateMetricBlockConfig(null)
 	})
 
 	afterEach(disposeMockEndpoints)
@@ -445,6 +457,59 @@ describe("<MetricMainBlock>", { concurrent: false }, () => {
 		await nextTick()
 
 		expect(renderedIconNames(wrapper)).not.toContain("mingcute:test-tube-line")
+	})
+
+	it("opens the config modal from the settings button", async ({ expect }) => {
+		const setNodeSelection = vi.fn()
+		const uid = nextUid()
+		const wrapper = await mountBlock({
+			uid: uid,
+			setNodeSelection: setNodeSelection,
+		})
+
+		await findButtonByText(
+			wrapper,
+			t("editor.metrics.config.modal-trigger-button-normal"),
+		).trigger("click")
+
+		expect(setNodeSelection).toHaveBeenCalledTimes(1)
+		expect(setNodeSelection).toHaveBeenCalledWith(5)
+		expect(useEditorStore().activeMetricBlockConfig).toBe(uid)
+	})
+
+	it("labels the settings button as view-only in read mode", async ({
+		expect,
+	}) => {
+		useEditorMeta().setEditable(false)
+		const uid = nextUid()
+		const wrapper = await mountBlock({ uid: uid })
+
+		await findButtonByText(
+			wrapper,
+			t("editor.metrics.config.modal-trigger-button-readonly"),
+		).trigger("click")
+
+		expect(useEditorStore().activeMetricBlockConfig).toBe(uid)
+	})
+
+	it("opens the config modal for a block with no resolvable position", async ({
+		expect,
+	}) => {
+		const setNodeSelection = vi.fn()
+		const uid = nextUid()
+		const wrapper = await mountBlock({
+			uid: uid,
+			getPos: () => undefined,
+			setNodeSelection: setNodeSelection,
+		})
+
+		await findButtonByText(
+			wrapper,
+			t("editor.metrics.config.modal-trigger-button-normal"),
+		).trigger("click")
+
+		expect(setNodeSelection).toHaveBeenCalledTimes(0)
+		expect(useEditorStore().activeMetricBlockConfig).toBe(uid)
 	})
 
 	it("flattens a legacy config on the first edit", async ({ expect }) => {

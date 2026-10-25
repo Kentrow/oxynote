@@ -93,9 +93,10 @@ describe("highlightTiptapScrollElement", { concurrent: false }, () => {
 		static instances: ResizeObserverStub[] = []
 
 		observe = vi.fn()
+		unobserve = vi.fn()
 		disconnect = vi.fn()
 
-		constructor() {
+		constructor(public callback: () => void) {
 			ResizeObserverStub.instances.push(this)
 		}
 	}
@@ -142,6 +143,26 @@ describe("highlightTiptapScrollElement", { concurrent: false }, () => {
 		document.body.appendChild(container)
 
 		return { container, target }
+	}
+
+	// an editor at the container's top holding a 20px block and, below
+	// it, the target in normal flow
+	function setupEditorDom() {
+		const { container, target } = setupDom()
+		const editorEl = document.createElement("div")
+		editorEl.className = "ProseMirror"
+		const above = document.createElement("div")
+		above.style.height = "20px"
+		target.style.position = "static"
+		editorEl.append(above, target)
+		container.appendChild(editorEl)
+
+		return { container, editorEl, target }
+	}
+
+	// mutation observers are called in a microtask after the change
+	function mutationsDelivered() {
+		return Promise.resolve()
 	}
 
 	function overlays() {
@@ -204,6 +225,99 @@ describe("highlightTiptapScrollElement", { concurrent: false }, () => {
 		expect(overlay.style.top).toBe("15px")
 		expect(overlay.style.height).toBe("70px")
 		expect(overlay.style.width).toBe("110px")
+	})
+
+	it("follows the target when a block above it grows", ({ expect }) => {
+		const { editorEl, target } = setupEditorDom()
+		const above = editorEl.firstElementChild as HTMLElement
+		highlightTiptapScrollElement("", target)
+		const overlay = overlays()[0] as HTMLElement
+		const observer = ResizeObserverStub.instances[0]
+		expect(overlay.style.top).toBe("15px")
+
+		above.style.height = "50px"
+		observer?.callback()
+
+		expect.soft(observer?.observe).toHaveBeenCalledTimes(2)
+		expect.soft(observer?.observe).toHaveBeenCalledWith(target)
+		expect.soft(observer?.observe).toHaveBeenCalledWith(editorEl)
+		expect.soft(overlay.style.top).toBe("45px")
+	})
+
+	it("follows a block that moves without changing the editor's height", async ({
+		expect,
+	}) => {
+		const { editorEl, target } = setupEditorDom()
+		target.id = "block-1"
+		highlightTiptapScrollElement("block-1", target)
+		const overlay = overlays()[0] as HTMLElement
+		expect(overlay.style.top).toBe("15px")
+
+		editorEl.prepend(target)
+		await mutationsDelivered()
+
+		expect(overlay.style.top).toBe("-5px")
+	})
+
+	it("follows a moved block that the editor drew as a new element", async ({
+		expect,
+	}) => {
+		const { editorEl, target } = setupEditorDom()
+		target.id = "block-1"
+		highlightTiptapScrollElement("block-1", target)
+		const overlay = overlays()[0] as HTMLElement
+		const observer = ResizeObserverStub.instances[0]
+		const redrawn = target.cloneNode(true) as HTMLElement
+
+		target.remove()
+		editorEl.prepend(redrawn)
+		await mutationsDelivered()
+
+		expect.soft(overlay.style.top).toBe("-5px")
+		expect.soft(observer?.unobserve).toHaveBeenCalledExactlyOnceWith(target)
+		expect.soft(observer?.observe).toHaveBeenLastCalledWith(redrawn)
+	})
+
+	it("removes the overlay and reports it when the block is deleted", async ({
+		expect,
+	}) => {
+		vi.useFakeTimers()
+
+		try {
+			const { target } = setupEditorDom()
+			target.id = "block-1"
+			const onRemoved = vi.fn()
+			highlightTiptapScrollElement("block-1", target, onRemoved)
+			const overlay = overlays()[0] as HTMLElement
+			const observer = ResizeObserverStub.instances[0]
+
+			target.remove()
+			await mutationsDelivered()
+			vi.advanceTimersByTime(300)
+
+			expect.soft(overlay.isConnected).toBe(false)
+			expect.soft(observer?.disconnect).toHaveBeenCalledTimes(1)
+			expect.soft(onRemoved).toHaveBeenCalledTimes(1)
+		} finally {
+			vi.useRealTimers()
+		}
+	})
+
+	it("disconnects its observers when the editor is unmounted", ({ expect }) => {
+		const { container, target } = setupEditorDom()
+		highlightTiptapScrollElement("", target)
+		const observer = ResizeObserverStub.instances[0]
+		const disconnectMutations = vi.spyOn(
+			MutationObserver.prototype,
+			"disconnect",
+		)
+
+		container.remove()
+		observer?.callback()
+
+		expect.soft(observer?.disconnect).toHaveBeenCalledTimes(1)
+		expect.soft(disconnectMutations).toHaveBeenCalledTimes(1)
+		expect.soft(overlays()).toHaveLength(0)
 	})
 
 	it("falls back to looking the target up by id", ({ expect }) => {

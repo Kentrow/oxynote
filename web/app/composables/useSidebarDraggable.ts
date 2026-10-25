@@ -1,11 +1,14 @@
 import type { Position } from "@vueuse/core"
 import type { CSSProperties } from "vue"
 import type { SidebarItem } from "~/components/sidebar"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 
 export interface SidebarDraggableOptions {
 	disabled?: MaybeRefOrGetter<boolean>
 	minDistance?: number // minimum distance required to trigger a drag
+	// a drop here would leave this item where it already is, so it is no
+	// target for it
+	noopFor?: MaybeRefOrGetter<string | null | undefined>
 }
 
 const useSidebarDraggableStore = defineStore("sidebar-draggable", () => {
@@ -118,9 +121,13 @@ export function useSidebarDraggable(
 				wrapper: toValue(wrapperElem)!,
 				item: toValue(elemSidebarItem),
 			})
+			// nothing under the pointer reacts to it while a drag runs, so other
+			// rows keep still. Drop targets come from the pointer position, not
+			// from pointer events.
 			document.documentElement.classList.add(
 				cn("cursor-grabbing!"),
 				cn("[&_*]:cursor-grabbing!"),
+				cn("[&_*]:pointer-events-none!"),
 			)
 		},
 		onEnd: () => {
@@ -140,6 +147,7 @@ export function useSidebarDraggable(
 				cn("[&_*]:select-none!"),
 				cn("cursor-grabbing!"),
 				cn("[&_*]:cursor-grabbing!"),
+				cn("[&_*]:pointer-events-none!"),
 			)
 		},
 	})
@@ -155,6 +163,7 @@ export function useSidebarDraggable(
 			store.draggedElem !== null &&
 			toValue(elemSidebarItem).id !== store.draggedElem.item.id &&
 			toValue(elemSidebarItem).dragGroup === store.draggedElem.item.dragGroup &&
+			toValue(opts.noopFor) !== store.draggedElem.item.id &&
 			!isValidDescendent(store.draggedElem.wrapper, toValue(elem))
 		)
 	})

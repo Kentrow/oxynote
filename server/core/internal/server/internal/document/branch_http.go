@@ -76,7 +76,7 @@ func (h *Handler) UpdateDocumentBranch(w http.ResponseWriter, r *http.Request) {
 
 	// the index carries the branch name on every entry of the branch.
 	if ndoc.BranchName != doc.BranchName {
-		if err := tx.InsertSearchJob(r.Context(), search.BranchScope(session.ActiveOrganizationID, ndoc.ID, ndoc.BranchID)); err != nil {
+		if err := h.searchQueue.Enqueue(r.Context(), tx, search.BranchScope(session.ActiveOrganizationID, ndoc.ID, ndoc.BranchID)); err != nil {
 			httpserver.RespondError(h.log, w, err)
 			return
 		}
@@ -86,8 +86,6 @@ func (h *Handler) UpdateDocumentBranch(w http.ResponseWriter, r *http.Request) {
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
-
-	h.searchTrigger.Trigger()
 
 	if h.metadata.changeCallback != nil {
 		h.metadata.changeCallback(session.ActiveOrganizationID, ndoc)
@@ -235,7 +233,7 @@ func (h *Handler) UpdateDocumentBranchByIDUnsafe(w http.ResponseWriter, r *http.
 		}
 	}
 
-	if err = tx.InsertSearchJob(r.Context(), search.BranchScope(doc.OrganizationID, doc.ID, doc.BranchID)); err != nil {
+	if err = h.searchQueue.Enqueue(r.Context(), tx, search.BranchScope(doc.OrganizationID, doc.ID, doc.BranchID)); err != nil {
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
@@ -245,8 +243,6 @@ func (h *Handler) UpdateDocumentBranchByIDUnsafe(w http.ResponseWriter, r *http.
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
-
-	h.searchTrigger.Trigger()
 
 	if h.metadata.changeCallback != nil {
 		h.metadata.changeCallback(doc.OrganizationID, ndoc)
@@ -370,7 +366,7 @@ func (h *Handler) MergeBranches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tx.InsertSearchJob(r.Context(), search.BranchScope(session.ActiveOrganizationID, toDoc.ID, toDoc.BranchID)); err != nil {
+	if err := h.searchQueue.Enqueue(r.Context(), tx, search.BranchScope(session.ActiveOrganizationID, toDoc.ID, toDoc.BranchID)); err != nil {
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
@@ -385,7 +381,6 @@ func (h *Handler) MergeBranches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.searchTrigger.Trigger()
 	h.hookMan.SetUpBranch(r.Context(), toDoc.BranchID, session.ActiveOrganizationID)
 
 	if h.metadata.changeCallback != nil {
@@ -519,7 +514,7 @@ func (h *Handler) CreateDocumentBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tx.InsertSearchJob(r.Context(), search.BranchScope(session.ActiveOrganizationID, newDoc.ID, newDoc.BranchID)); err != nil {
+	if err := h.searchQueue.Enqueue(r.Context(), tx, search.BranchScope(session.ActiveOrganizationID, newDoc.ID, newDoc.BranchID)); err != nil {
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
@@ -529,7 +524,6 @@ func (h *Handler) CreateDocumentBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.searchTrigger.Trigger()
 	h.hookMan.SetUpBranch(r.Context(), newDoc.BranchID, session.ActiveOrganizationID)
 
 	httpserver.Respond(
@@ -601,7 +595,7 @@ func (h *Handler) DeleteDocumentBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tx.InsertSearchJob(r.Context(), search.BranchScope(session.ActiveOrganizationID, branchDoc.ID, branchID)); err != nil {
+	if err := h.searchQueue.Enqueue(r.Context(), tx, search.BranchScope(session.ActiveOrganizationID, branchDoc.ID, branchID)); err != nil {
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
@@ -610,8 +604,6 @@ func (h *Handler) DeleteDocumentBranch(w http.ResponseWriter, r *http.Request) {
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
-
-	h.searchTrigger.Trigger()
 
 	httpserver.Respond(
 		h.log,

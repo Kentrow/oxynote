@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 
 const emit = defineEmits<{
 	(e: "data-source-creation", type: DataSourceType): void

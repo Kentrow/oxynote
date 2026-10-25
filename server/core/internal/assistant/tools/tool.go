@@ -7,6 +7,7 @@ import (
 	"github.com/oxynote/oxynote/server/core/internal/document"
 	"github.com/oxynote/oxynote/server/core/internal/document/hook"
 	"github.com/oxynote/oxynote/server/core/internal/tag"
+	"github.com/oxynote/oxynote/server/core/internal/variable"
 	"github.com/rs/xid"
 )
 
@@ -76,14 +77,19 @@ type Traits struct {
 	// for text edits is not consent to delete a document.
 	Destructive bool
 
-	// Overwrites indicates the write replaces content the caller did
-	// not name: the target's nested blocks go with it, and so do the
-	// uids comments and hooks hang off. It is what MCP's destructive
+	// Overwrites indicates the write replaces content or state the
+	// caller did not name: a replaced block's nested blocks and the uids
+	// comments and hooks hang off, everyone's values when a variable
+	// changes type, or a hook's watch state. It is what MCP's destructive
 	// hint reports, and it is deliberately not Destructive — a client
 	// deciding whether to auto-approve needs to know, while an
 	// approve-all inside a chat turn is meant to cover exactly these
 	// edits.
 	Overwrites bool
+
+	// Idempotent indicates a repeated call with the same arguments
+	// changes nothing more. It is what MCP's idempotent hint reports.
+	Idempotent bool
 
 	// DataSource indicates the tool reads one of the organisation's
 	// outbound data-source connections rather than its documents. A
@@ -98,6 +104,11 @@ type Traits struct {
 	// holds none of the conversation state such a tool addresses —
 	// never sees it offered.
 	Internal bool
+
+	// Group names the tools the chat assistant loads together on
+	// request instead of up front. Empty is a tool every conversation
+	// starts with. Other surfaces offer every tool either way.
+	Group Group
 }
 
 // Tool is a tool the model can call. What a tool is — whether it
@@ -182,6 +193,14 @@ type DescribeInput interface {
 	// FetchTag should return the tag the id names, with the documents
 	// carrying it, for a description that has to name its subject.
 	FetchTag(tagID xid.ID) (*tag.Summary, error)
+
+	// FetchVariableGroup should return the variable group the id names,
+	// for a description that has to name its subject.
+	FetchVariableGroup(groupID xid.ID) (*variable.GroupTree, error)
+
+	// FetchVariable should return the variable the id names, for a
+	// description that has to name its subject.
+	FetchVariable(variableID xid.ID) (*variable.Entry, error)
 
 	// FetchHook should return the hook the id names on the document, for
 	// a description that has to name its subject.

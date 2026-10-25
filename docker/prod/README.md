@@ -40,7 +40,7 @@ fails the boot with an error naming it.
 
 | Variable | Meaning |
 | --- | --- |
-| `OXYNOTE_DB_DSN` | an external PostgreSQL, e.g. `postgresql://user:pass@host/db?sslmode=require`. Unset, the image runs its own PostgreSQL 18 with its data under `/oxynote/data/postgres`; set, the embedded one never starts. One database serves the whole product; migrations run automatically at boot. |
+| `OXYNOTE_DB_DSN` | an external PostgreSQL, e.g. `postgresql://user:pass@host/db?sslmode=require`. Unset, the image runs its own PostgreSQL 18 with its data under `/oxynote/data/postgres`; set, the embedded one never starts. One database serves the whole product; migrations run automatically at boot. The role needs `CREATE` on the database, since core keeps its job queue in a `dbos` schema. |
 
 ### Public address
 

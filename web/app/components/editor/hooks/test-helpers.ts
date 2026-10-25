@@ -5,8 +5,8 @@ import { mountSuspended } from "@nuxt/test-utils/runtime"
 import {
 	DropdownMenu,
 	DropdownMenuContent,
-} from "~/components/shadcn/ui/dropdown-menu"
-import { TooltipProvider } from "~/components/shadcn/ui/tooltip"
+} from "#layers/ui/app/components/shadcn/ui/dropdown-menu"
+import { TooltipProvider } from "#layers/ui/app/components/shadcn/ui/tooltip"
 
 // eslint's ts program resolves .vue imports as error typed, so a
 // component handed to mountHookMenu looks unsafe to it while vue-tsc

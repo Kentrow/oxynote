@@ -1,5 +1,5 @@
 <script lang="ts" setup generic="T">
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 
 // an undefined side had nothing set, so it shows emptyLabel instead. Both
 // sides take the same width, and the taller one sets the height of both.

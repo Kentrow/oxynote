@@ -51,6 +51,12 @@ check-coverage:
 	@go tool cover -func=coverage.out | tail -n 1 | awk -v min=$(COVERAGE_MIN) \
 		'{ print; if ($$3 + 0 < min) { printf "total coverage is below the %s%% minimum\n", min; exit 1 } }'
 
+# Rewrite internal/db/schema.sql from the migrations. Test_Schema fails
+# until it matches.
+.PHONY: schema
+schema:
+	@UPDATE_GOLDEN=1 go test ./internal/db -run '^Test_Schema$$' -count=1
+
 # Run the linters and apply automatic fixes.
 .PHONY: lint
 lint:

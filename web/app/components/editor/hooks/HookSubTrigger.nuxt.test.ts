@@ -4,7 +4,7 @@ import { iconNames, makeHook, mountHookMenu } from "./test-helpers"
 import type { HookDiffContext } from "./hook-diff"
 import type { HookStatus } from "./hook-status"
 import { DiffStatus } from "../diff/position-map"
-import { DropdownMenuSub } from "~/components/shadcn/ui/dropdown-menu"
+import { DropdownMenuSub } from "#layers/ui/app/components/shadcn/ui/dropdown-menu"
 import { clearTeleportedOverlays, t } from "~/components/test-helpers"
 
 const TITLE = "Website Changes"

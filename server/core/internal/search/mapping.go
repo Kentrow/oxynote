@@ -21,7 +21,7 @@ import (
 // whenever the analyzer, the fields, the synonyms file or anything else the
 // index stores changes shape: an index carrying another version is rebuilt
 // at boot.
-const _mappingVersion = "2"
+const _mappingVersion = "3"
 
 // _mappingVersionKey is the index-internal key holding the mapping version.
 const _mappingVersionKey = "mapping-version"

@@ -6,7 +6,7 @@
 import type { DateValue } from "@internationalized/date"
 import { getLocalTimeZone } from "@internationalized/date"
 import { isBefore, startOfTomorrow } from "date-fns"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 
 const props = withDefaults(
 	defineProps<{

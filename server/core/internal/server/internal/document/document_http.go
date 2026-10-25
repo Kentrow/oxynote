@@ -34,13 +34,13 @@ var ErrInvalidDocumentParent = errutil.New(http.StatusBadRequest, "document.inva
 
 // Handler holds dependencies required for tenant app-related operations.
 type Handler struct {
-	log           *slog.Logger
-	db            DB
-	hookMan       HookManager
-	searcher      Searcher
-	searchTrigger SearchTrigger
-	notifPub      notification.Publisher
-	storer        Storer
+	log         *slog.Logger
+	db          DB
+	hookMan     HookManager
+	searcher    Searcher
+	searchQueue SearchQueue
+	notifPub    notification.Publisher
+	storer      Storer
 
 	tree struct {
 		changeCallback func(organizationID string, parentId null.Value[xid.ID])
@@ -65,18 +65,18 @@ func NewHandler(
 	db DB,
 	hookMan HookManager,
 	searcher Searcher,
-	searchTrigger SearchTrigger,
+	searchQueue SearchQueue,
 	notifPub notification.Publisher,
 	storer Storer,
 ) *Handler {
 	return &Handler{
-		log:           log,
-		db:            db,
-		hookMan:       hookMan,
-		searcher:      searcher,
-		searchTrigger: searchTrigger,
-		notifPub:      notifPub,
-		storer:        storer,
+		log:         log,
+		db:          db,
+		hookMan:     hookMan,
+		searcher:    searcher,
+		searchQueue: searchQueue,
+		notifPub:    notifPub,
+		storer:      storer,
 	}
 }
 
@@ -741,7 +741,7 @@ func (h *Handler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, id := range ids {
-		if err = tx.InsertSearchJob(r.Context(), search.DocumentScope(session.ActiveOrganizationID, id)); err != nil {
+		if err = h.searchQueue.Enqueue(r.Context(), tx, search.DocumentScope(session.ActiveOrganizationID, id)); err != nil {
 			httpserver.RespondError(h.log, w, err)
 			return
 		}
@@ -752,8 +752,6 @@ func (h *Handler) DeleteDocument(w http.ResponseWriter, r *http.Request) {
 		httpserver.RespondError(h.log, w, err)
 		return
 	}
-
-	h.searchTrigger.Trigger()
 
 	if h.tree.changeCallback != nil {
 		h.tree.changeCallback(session.ActiveOrganizationID, doc.ParentID)
@@ -965,7 +963,7 @@ func (h *Handler) insertDocumentTx(
 		return err
 	}
 
-	if err = tx.InsertSearchJob(ctx, search.BranchScope(session.ActiveOrganizationID, doc.ID, doc.BranchID)); err != nil {
+	if err = h.searchQueue.Enqueue(ctx, tx, search.BranchScope(session.ActiveOrganizationID, doc.ID, doc.BranchID)); err != nil {
 		return err
 	}
 
@@ -986,8 +984,6 @@ func (h *Handler) insertDocumentTx(
 	if err = tx.Commit(); err != nil {
 		return err
 	}
-
-	h.searchTrigger.Trigger()
 
 	if sourceBranchID.Valid {
 		h.hookMan.SetUpBranch(ctx, doc.BranchID, session.ActiveOrganizationID)
@@ -1056,9 +1052,6 @@ type HooksDBAgent interface {
 type DocumentsDBAgent interface {
 	// InsertDocument should insert the document.
 	InsertDocument(ctx context.Context, doc documentCore.Document) error
-
-	// InsertSearchJob should queue the search job's scope.
-	InsertSearchJob(ctx context.Context, job search.Job) error
 
 	// CheckDocumentExists returns nil if the document exists and belongs to the given organization.
 	CheckDocumentExists(ctx context.Context, id xid.ID, organizationID string) error
@@ -1230,12 +1223,13 @@ type Storer interface {
 	Copy(ctx context.Context, srcFolder, srcID, dstFolder, dstID string) error
 }
 
-// SearchTrigger runs the search-job worker once a job has committed.
+// SearchQueue queues search jobs.
 //
-//go:generate ../../../../scripts/codegen/mock -t internal SearchTrigger search_trigger
-type SearchTrigger interface {
-	// Trigger should run a search-job pass right away.
-	Trigger()
+//go:generate ../../../../scripts/codegen/mock -t internal SearchQueue search_queue
+type SearchQueue interface {
+	// Enqueue should queue the job on the transaction, to run once it
+	// commits.
+	Enqueue(ctx context.Context, tx sqlutil.Tx, j search.Job) error
 }
 
 // Searcher is the full-text search surface the search endpoint answers

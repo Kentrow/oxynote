@@ -1,13 +1,19 @@
+import type { Component } from "vue"
+
 export type PlainActionFn = (() => void) | (() => Promise<void>)
 
 // SidebarItemAction is one entry of a row's dropdown menu. A row with no
-// actions renders no menu at all.
-export interface SidebarItemAction {
+// actions renders no menu at all. An entry either runs fn when pressed or
+// opens menu to the side, a component with controls of its own that emits
+// close once it is done with the whole menu.
+export type SidebarItemAction = {
 	id: string
 	name: string
 	icon: string
-	fn: PlainActionFn
-}
+} & (
+	| { fn: PlainActionFn }
+	| { menu: { component: Component; props: Record<string, unknown> } }
+)
 
 export const SIDEBAR_ITEM_PLACEHOLDER_ID = "placeholder"
 const TAG_DRAG_GROUP = "tags"
@@ -38,7 +44,9 @@ export interface SidebarItem {
 	icon?: string | null
 	dotColor?: string // a coloured dot rendered in place of the icon
 	count?: number | null
+	countTooltip?: string
 	active: boolean
+	disabled?: boolean
 	draggable: boolean
 	// items may only be dropped onto or next to items sharing this group,
 	// which keeps each section's rows out of every other section
@@ -128,7 +136,7 @@ export function processTagTree(
 		.map((v) => ({
 			id: v.id,
 			name: v.tagName,
-			dotColor: v.color,
+			dotColor: paletteColor(v.color),
 			acceptsChildren: false,
 			active: false,
 			draggable: true,

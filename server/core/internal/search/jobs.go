@@ -10,22 +10,14 @@ import (
 // content, so applying it in any order or any number of times yields the
 // same index.
 type Job struct {
-	// ID is the unique identifier for the job.
-	ID int64 `db:"id"`
-
-	// Version counts the times the scope was queued while the job was
-	// pending. A job is deleted only at the version it was applied with,
-	// so a change committed during the application is picked up again.
-	Version int64 `db:"version"`
-
 	// OrganizationID is the organization the scope belongs to.
-	OrganizationID string `db:"organization_id"`
+	OrganizationID string `json:"organizationId"`
 
 	// DocumentID is the document the scope narrows to, if any.
-	DocumentID null.Value[xid.ID] `db:"document_id"`
+	DocumentID null.Value[xid.ID] `json:"documentId"`
 
 	// BranchID is the branch the scope narrows to, if any.
-	BranchID null.Value[xid.ID] `db:"branch_id"`
+	BranchID null.Value[xid.ID] `json:"branchId"`
 }
 
 // BranchScope names one branch of a document.

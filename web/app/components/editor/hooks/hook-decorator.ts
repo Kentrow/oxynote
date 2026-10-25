@@ -1,7 +1,7 @@
 import { Extension } from "@tiptap/core"
 import { Plugin, PluginKey, type Transaction } from "prosemirror-state"
 import { Decoration, DecorationSet } from "prosemirror-view"
-import { cn } from "@/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import type { Node as PMNode } from "prosemirror-model"
 import type { EditorView } from "prosemirror-view"
 import {

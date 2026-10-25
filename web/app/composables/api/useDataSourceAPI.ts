@@ -9,15 +9,33 @@ const DATA_SOURCE_QUERY_KEYS = {
 	detail: (dataSourceId: string) => ["data-sources", dataSourceId] as const,
 	connection: (dataSourceId: string) =>
 		["data-sources", dataSourceId, "connection"] as const,
-	query: (dataSourceId: string, query: string, timeRange: string) =>
-		["generic-query", dataSourceId, "query", query, timeRange] as const,
-	queries: (dataSourceId: string, queryStrings: string[], timeRange: string) =>
+	query: (
+		dataSourceId: string,
+		query: string,
+		timeRange: string,
+		variableValues: Record<string, string>,
+	) =>
+		[
+			"generic-query",
+			dataSourceId,
+			"query",
+			query,
+			timeRange,
+			variableValues,
+		] as const,
+	queries: (
+		dataSourceId: string,
+		queryStrings: string[],
+		timeRange: string,
+		variableValues: Record<string, string>,
+	) =>
 		[
 			"generic-query",
 			dataSourceId,
 			"queries",
 			...queryStrings,
 			timeRange,
+			variableValues,
 		] as const,
 }
 
@@ -409,6 +427,7 @@ export default function () {
 					dataSourceId || "",
 					params?.q || "",
 					params?.timeRangeKey || "",
+					params?.variableValues ?? {},
 				)
 			},
 			query: async () => {
@@ -423,6 +442,7 @@ export default function () {
 					q: params.q,
 					chartType: params.chartType,
 					...formatQueryTimeRange(params),
+					...formatQueryVariableValues(params.variableValues),
 				})
 
 				try {
@@ -475,6 +495,7 @@ export default function () {
 					dataSourceId || "",
 					queries?.sort() ?? [],
 					params?.timeRangeKey || "",
+					params?.variableValues ?? {},
 				)
 			},
 			query: async (): Promise<GenericQueryResult[]> => {
@@ -485,7 +506,10 @@ export default function () {
 					return []
 				}
 
-				const timeRangeParams = formatQueryTimeRange(params)
+				const timeRangeParams = {
+					...formatQueryTimeRange(params),
+					...formatQueryVariableValues(params.variableValues),
+				}
 				const results = await Promise.all(
 					params.queries.map(async (q) => {
 						const queryParams = new URLSearchParams({

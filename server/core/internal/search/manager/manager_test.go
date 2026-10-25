@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/oxynote/oxynote/server/core/internal/document"
+	"github.com/oxynote/oxynote/server/core/internal/job"
 	"github.com/oxynote/oxynote/server/core/internal/search"
+	"github.com/oxynote/oxynote/server/core/pkg/sqlutil"
 	"github.com/oxynote/oxynote/server/core/pkg/testutil"
 	"github.com/rs/xid"
 	"github.com/stretchr/testify/assert"
@@ -18,21 +20,6 @@ import (
 
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, testutil.IgnoreBleveWorkers())
-}
-
-// jobs builds n sequential branch-scope jobs with IDs starting at start.
-func jobs(start, n int) []search.Job {
-	jj := make([]search.Job, 0, n)
-
-	for i := range n {
-		job := search.BranchScope("org-1", xid.New(), xid.New())
-		job.ID = int64(start + i)
-		job.Version = 1
-
-		jj = append(jj, job)
-	}
-
-	return jj
 }
 
 // stubDocument builds a default-branch document with one paragraph.
@@ -69,212 +56,50 @@ func (emptySource) FetchDocumentBranchesAfter(context.Context, xid.ID, int) ([]d
 func Test_NewManager(t *testing.T) {
 	t.Parallel()
 
-	man := NewManager(slog.New(slog.DiscardHandler), &DBMock{}, &IndexMock{})
+	// error
+	jobMan := &JobManagerMock{
+		RegisterFunc: func(job.Registrable) error {
+			return assert.AnError
+		},
+	}
 
+	man, err := NewManager(&DBMock{}, &IndexMock{}, jobMan)
+	assert.Error(t, err)
+	assert.Nil(t, man)
+	assert.Len(t, jobMan.RegisterCalls(), 1)
+
+	// success
+	jobMan = &JobManagerMock{}
+
+	man, err = NewManager(&DBMock{}, &IndexMock{}, jobMan)
+	require.NoError(t, err)
 	require.NotNil(t, man)
-	assert.NotNil(t, man.log)
 	assert.NotNil(t, man.db)
 	assert.NotNil(t, man.index)
-	assert.NotNil(t, man.pe)
+	require.Len(t, jobMan.RegisterCalls(), 1)
+	assert.Equal(t, man.queue, jobMan.RegisterCalls()[0].Q)
 }
 
-func Test_Manager_Start(t *testing.T) {
+func Test_Manager_Enqueue(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	fetches := 0
-
-	var man *Manager
-
-	// the first pass runs at once; a trigger brings the second, which ends
-	// the run.
-	db := &DBMock{
-		FetchSearchJobsFunc: func(context.Context, int64, int64) ([]search.Job, error) {
-			fetches++
-
-			switch fetches {
-			case 1:
-				man.Trigger()
-			case 2:
-				cancel()
-			}
-
-			return nil, nil
-		},
-	}
-
-	man = NewManager(slog.New(slog.DiscardHandler), db, &IndexMock{})
-
-	stopped := make(chan struct{})
-
-	go func() {
-		defer close(stopped)
-
-		man.Start(ctx)
-	}()
-
-	<-stopped
-
-	assert.Len(t, db.FetchSearchJobsCalls(), 2)
-}
-
-func Test_Manager_Trigger(t *testing.T) {
-	t.Parallel()
-
-	man := NewManager(slog.New(slog.DiscardHandler), &DBMock{}, &IndexMock{})
-
-	// repeated triggers never block; the executor's own tests cover the
-	// coalescing.
-	assert.NotPanics(t, func() {
-		man.Trigger()
-		man.Trigger()
-	})
-}
-
-func Test_Manager_run(t *testing.T) {
-	t.Parallel()
-
-	// an error is logged and swallowed
-	db := &DBMock{
-		FetchSearchJobsFunc: func(context.Context, int64, int64) ([]search.Job, error) {
-			return nil, assert.AnError
-		},
-	}
-
-	man := NewManager(slog.New(slog.DiscardHandler), db, &IndexMock{})
-
-	assert.NotPanics(t, func() { man.run(context.Background()) })
-	assert.Len(t, db.FetchSearchJobsCalls(), 1)
-}
-
-func Test_Manager_processJobs(t *testing.T) {
-	t.Parallel()
-
-	type check func(*testing.T, *DBMock, *IndexMock, error)
-
-	checks := func(cc ...check) []check { return cc }
-
-	hasError := func(expect bool) check {
-		return func(t *testing.T, _ *DBMock, _ *IndexMock, err error) {
-			if expect {
-				require.Error(t, err)
-				return
-			}
-
-			require.NoError(t, err)
-		}
-	}
-
-	wasReplaceCalled := func(count int) check {
-		return func(t *testing.T, _ *DBMock, idx *IndexMock, _ error) {
-			require.Len(t, idx.ReplaceBranchCalls(), count)
-		}
-	}
-
-	wasDeleteCalled := func(count int) check {
-		return func(t *testing.T, db *DBMock, _ *IndexMock, _ error) {
-			require.Len(t, db.DeleteSearchJobCalls(), count)
-		}
-	}
-
-	isCancelled := func() check {
-		return func(t *testing.T, _ *DBMock, _ *IndexMock, err error) {
-			assert.Equal(t, context.Canceled, err)
-		}
-	}
+	scope := search.BranchScope("org-1", xid.New(), xid.New())
+	tx := &sql.Tx{}
 
 	cc := map[string]struct {
-		Batches          [][]search.Job
-		CancelledContext bool
-		FailJobs         map[int64]bool
-		DeleteErr        error
-		Checks           []check
+		Queue *QueueMock
+		Err   error
 	}{
-		"Cancelled context stops the run": {
-			CancelledContext: true,
-			Checks: checks(
-				isCancelled(),
-				wasReplaceCalled(0),
-			),
-		},
-		"Error returned by DB.FetchSearchJobs": {
-			Batches: nil,
-			Checks: checks(
-				hasError(true),
-				wasReplaceCalled(0),
-			),
-		},
-		"Jobs are applied and deleted at their version": {
-			Batches: [][]search.Job{jobs(1, 3)},
-			Checks: checks(
-				hasError(false),
-				wasReplaceCalled(3),
-				wasDeleteCalled(3),
-				func(t *testing.T, db *DBMock, _ *IndexMock, _ error) {
-					for i, call := range db.DeleteSearchJobCalls() {
-						assert.Equal(t, int64(i+1), call.ID)
-						assert.Equal(t, int64(1), call.Version)
-					}
+		"Error returned by Queue.Enqueue": {
+			Queue: &QueueMock{
+				EnqueueFunc: func(context.Context, sqlutil.Tx, search.Job) error {
+					return assert.AnError
 				},
-			),
-		},
-		"Full batches keep paginating past the last job ID": {
-			Batches: [][]search.Job{jobs(1, _processingBatch), jobs(101, 2)},
-			Checks: checks(
-				hasError(false),
-				wasReplaceCalled(_processingBatch+2),
-				wasDeleteCalled(_processingBatch+2),
-				func(t *testing.T, db *DBMock, _ *IndexMock, _ error) {
-					ff := db.FetchSearchJobsCalls()
-					require.Len(t, ff, 2)
-					assert.Equal(t, int64(0), ff[0].OffsetID)
-					assert.Equal(t, int64(_processingBatch), ff[1].OffsetID)
-				},
-			),
-		},
-		"Failed job stays queued and the others still run": {
-			Batches:  [][]search.Job{jobs(1, 3)},
-			FailJobs: map[int64]bool{2: true},
-			Checks: checks(
-				hasError(false),
-				wasReplaceCalled(3),
-				wasDeleteCalled(2),
-				func(t *testing.T, db *DBMock, _ *IndexMock, _ error) {
-					ff := db.DeleteSearchJobCalls()
-					require.Len(t, ff, 2)
-					assert.Equal(t, int64(1), ff[0].ID)
-					assert.Equal(t, int64(3), ff[1].ID)
-				},
-			),
-		},
-		"Persistently failing full batches advance and terminate": {
-			// the offset moves past failing jobs, so a wall of
-			// failures cannot refetch the same batch forever.
-			Batches: [][]search.Job{
-				jobs(1, _processingBatch),
-				jobs(101, _processingBatch),
-				nil,
 			},
-			FailJobs: map[int64]bool{-1: true},
-			Checks: checks(
-				hasError(false),
-				wasReplaceCalled(2*_processingBatch),
-				wasDeleteCalled(0),
-			),
+			Err: assert.AnError,
 		},
-		"Error returned by DB.DeleteSearchJob still advances": {
-			Batches: [][]search.Job{
-				jobs(1, _processingBatch),
-				nil,
-			},
-			DeleteErr: assert.AnError,
-			Checks: checks(
-				hasError(false),
-				wasReplaceCalled(_processingBatch),
-				wasDeleteCalled(_processingBatch),
-			),
+		"Successful enqueue": {
+			Queue: &QueueMock{},
 		},
 	}
 
@@ -282,75 +107,44 @@ func Test_Manager_processJobs(t *testing.T) {
 		t.Run(cn, func(t *testing.T) {
 			t.Parallel()
 
-			fetches := 0
+			man := &Manager{queue: c.Queue}
 
-			db := &DBMock{
-				FetchSearchJobsFunc: func(context.Context, int64, int64) ([]search.Job, error) {
-					if fetches >= len(c.Batches) {
-						if len(c.Batches) == 0 {
-							return nil, assert.AnError
-						}
+			err := man.Enqueue(context.Background(), tx, scope)
+			testutil.AssertEqualError(t, c.Err, err)
 
-						t.Fatal("unexpected extra fetch: the pagination did not terminate")
-					}
-
-					batch := c.Batches[fetches]
-					fetches++
-
-					return batch, nil
-				},
-				DeleteSearchJobFunc: func(context.Context, int64, int64) error {
-					return c.DeleteErr
-				},
-				FetchDocumentUnsafeByBranchIDFunc: func(_ context.Context, branchID xid.ID) (*document.Document, error) {
-					return stubDocument(branchID), nil
-				},
-			}
-
-			applied := 0
-
-			idx := &IndexMock{
-				ReplaceBranchFunc: func(context.Context, xid.ID, map[string]search.Block) error {
-					applied++
-
-					// the fixture numbers jobs from one in fetch order; a
-					// negative key fails every job.
-					if c.FailJobs[int64(applied)] || c.FailJobs[-1] {
-						return assert.AnError
-					}
-
-					return nil
-				},
-			}
-
-			man := NewManager(slog.New(slog.DiscardHandler), db, idx)
-
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			if c.CancelledContext {
-				cancel()
-			}
-
-			err := man.processJobs(ctx)
-
-			for _, ch := range c.Checks {
-				ch(t, db, idx, err)
-			}
+			ff := c.Queue.EnqueueCalls()
+			require.Len(t, ff, 1)
+			assert.Same(t, tx, ff[0].Tx)
+			assert.Equal(t, scope, ff[0].J)
 		})
 	}
 }
 
-func Test_Manager_apply(t *testing.T) {
+func Test_Manager_processJob(t *testing.T) {
 	t.Parallel()
 
 	documentID, branchID := xid.New(), xid.New()
+	kept, gone := stubDocument(xid.New()), stubDocument(xid.New())
 
 	cc := map[string]struct {
-		Job  search.Job
-		DB   *DBMock
-		Err  error
-		Call func(t *testing.T, idx *IndexMock)
+		Job search.Job
+
+		// Set is applied against a real index once per order in Orders.
+		// Every order must yield the same entries, and applying a job
+		// twice changes nothing. Seed is in the index before each run.
+		Set    []search.Job
+		Orders [][]int
+		Seed   *document.Document
+
+		DB              *DBMock
+		Err             error
+		Call            func(t *testing.T, idx *IndexMock)
+		DocFetched      int
+		BranchesFetched int
+		Replaced        int
+		BranchDeleted   int
+		DocDeleted      int
+		OrgDeleted      int
 	}{
 		"Branch scope syncs the branch": {
 			Job: search.BranchScope("org-1", documentID, branchID),
@@ -363,6 +157,8 @@ func Test_Manager_apply(t *testing.T) {
 				require.Len(t, idx.ReplaceBranchCalls(), 1)
 				assert.Equal(t, branchID, idx.ReplaceBranchCalls()[0].BranchID)
 			},
+			DocFetched: 1,
+			Replaced:   1,
 		},
 		"Document scope syncs the document": {
 			Job: search.DocumentScope("org-1", documentID),
@@ -375,6 +171,8 @@ func Test_Manager_apply(t *testing.T) {
 				require.Len(t, idx.DeleteDocumentCalls(), 1)
 				assert.Equal(t, documentID, idx.DeleteDocumentCalls()[0].DocumentID)
 			},
+			BranchesFetched: 1,
+			DocDeleted:      1,
 		},
 		"Organization scope removes the organization": {
 			Job: search.OrganizationScope("org-1"),
@@ -383,6 +181,7 @@ func Test_Manager_apply(t *testing.T) {
 				require.Len(t, idx.DeleteOrganizationCalls(), 1)
 				assert.Equal(t, "org-1", idx.DeleteOrganizationCalls()[0].OrganizationID)
 			},
+			OrgDeleted: 1,
 		},
 		"Error returned by Index.DeleteOrganization": {
 			Job: search.OrganizationScope("org-1"),
@@ -391,6 +190,36 @@ func Test_Manager_apply(t *testing.T) {
 			Call: func(t *testing.T, idx *IndexMock) {
 				require.Len(t, idx.DeleteOrganizationCalls(), 1)
 			},
+			OrgDeleted: 1,
+		},
+		"Jobs are order independent and idempotent": {
+			Set: []search.Job{
+				search.BranchScope("org-1", kept.ID, kept.BranchID),
+				search.BranchScope("org-1", gone.ID, gone.BranchID),
+				search.DocumentScope("org-1", xid.New()),
+				search.OrganizationScope("org-2"),
+			},
+			Orders: [][]int{
+				{0, 1, 2, 3},
+				{3, 2, 1, 0},
+				{1, 0, 3, 2},
+				{0, 0, 2, 1, 3, 1},
+			},
+			Seed: gone,
+			DB: &DBMock{
+				FetchDocumentUnsafeByBranchIDFunc: func(_ context.Context, branchID xid.ID) (*document.Document, error) {
+					if branchID == kept.BranchID {
+						return kept, nil
+					}
+
+					return nil, sql.ErrNoRows
+				},
+				FetchDocumentBranchesUnsafeFunc: func(context.Context, xid.ID) ([]document.BranchSummary, error) {
+					return nil, nil
+				},
+			},
+			DocFetched:      10,
+			BranchesFetched: 4,
 		},
 	}
 
@@ -398,91 +227,65 @@ func Test_Manager_apply(t *testing.T) {
 		t.Run(cn, func(t *testing.T) {
 			t.Parallel()
 
-			idx := &IndexMock{
-				DeleteOrganizationFunc: func(context.Context, string) error {
-					return c.Err
-				},
-			}
+			if c.Orders != nil {
+				var expected []search.Block
 
-			man := NewManager(slog.New(slog.DiscardHandler), c.DB, idx)
+				for i, order := range c.Orders {
+					idx, err := search.Open(context.Background(), slog.New(slog.DiscardHandler), filepath.Join(t.TempDir(), "index"), emptySource{})
+					require.NoError(t, err)
 
-			err := man.apply(context.Background(), c.Job)
+					// the branches to remove start out present, so the
+					// removals have something to do.
+					require.NoError(t, idx.ReplaceBranch(context.Background(), c.Seed.BranchID, search.Entries(*c.Seed)))
 
-			if c.Err != nil {
-				require.Error(t, err)
+					man := &Manager{db: c.DB, index: idx}
+
+					for _, j := range order {
+						require.NoError(t, man.processJob(context.Background(), c.Set[j]))
+					}
+
+					blocks, err := idx.SearchDocumentBlocks(context.Background(), "org-1", "hello runbook", 50)
+					require.NoError(t, err)
+					require.NoError(t, idx.Close())
+
+					if i == 0 {
+						expected = blocks
+						require.Len(t, expected, 2, "the kept branch's paragraph and name")
+
+						continue
+					}
+
+					assert.ElementsMatch(t, expected, blocks)
+				}
 			} else {
-				require.NoError(t, err)
-			}
-
-			c.Call(t, idx)
-		})
-	}
-
-	// applied against a real index, a set of jobs yields the same entries in
-	// every order, and applying one twice changes nothing.
-	t.Run("Jobs are order-independent and idempotent", func(t *testing.T) {
-		t.Parallel()
-
-		kept, gone := stubDocument(xid.New()), stubDocument(xid.New())
-		removed := xid.New()
-
-		db := &DBMock{
-			FetchDocumentUnsafeByBranchIDFunc: func(_ context.Context, branchID xid.ID) (*document.Document, error) {
-				if branchID == kept.BranchID {
-					return kept, nil
+				idx := &IndexMock{
+					DeleteOrganizationFunc: func(context.Context, string) error {
+						return c.Err
+					},
 				}
 
-				return nil, sql.ErrNoRows
-			},
-			FetchDocumentBranchesUnsafeFunc: func(context.Context, xid.ID) ([]document.BranchSummary, error) {
-				return nil, nil
-			},
-		}
+				man := &Manager{db: c.DB, index: idx}
 
-		set := []search.Job{
-			search.BranchScope("org-1", kept.ID, kept.BranchID),
-			search.BranchScope("org-1", gone.ID, gone.BranchID),
-			search.DocumentScope("org-1", removed),
-			search.OrganizationScope("org-2"),
-		}
+				err := man.processJob(context.Background(), c.Job)
 
-		orders := [][]int{
-			{0, 1, 2, 3},
-			{3, 2, 1, 0},
-			{1, 0, 3, 2},
-			{0, 0, 2, 1, 3, 1},
-		}
+				if c.Err != nil {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err)
+				}
 
-		var expected []search.Block
+				assert.Len(t, idx.ReplaceBranchCalls(), c.Replaced)
+				assert.Len(t, idx.DeleteBranchCalls(), c.BranchDeleted)
+				assert.Len(t, idx.DeleteDocumentCalls(), c.DocDeleted)
+				assert.Len(t, idx.DeleteOrganizationCalls(), c.OrgDeleted)
 
-		for i, order := range orders {
-			idx, err := search.Open(context.Background(), slog.New(slog.DiscardHandler), filepath.Join(t.TempDir(), "index"), emptySource{})
-			require.NoError(t, err)
-
-			// the branches to remove start out present, so the removals
-			// have something to do.
-			require.NoError(t, idx.ReplaceBranch(context.Background(), gone.BranchID, search.Entries(*gone)))
-
-			man := NewManager(slog.New(slog.DiscardHandler), db, idx)
-
-			for _, j := range order {
-				require.NoError(t, man.apply(context.Background(), set[j]))
+				c.Call(t, idx)
 			}
 
-			blocks, err := idx.SearchDocumentBlocks(context.Background(), "org-1", "hello runbook", 50)
-			require.NoError(t, err)
-			require.NoError(t, idx.Close())
-
-			if i == 0 {
-				expected = blocks
-				require.Len(t, expected, 2, "the kept branch's paragraph and name")
-
-				continue
-			}
-
-			assert.ElementsMatch(t, expected, blocks)
-		}
-	})
+			assert.Len(t, c.DB.FetchDocumentUnsafeByBranchIDCalls(), c.DocFetched)
+			assert.Len(t, c.DB.FetchDocumentBranchesUnsafeCalls(), c.BranchesFetched)
+		})
+	}
 }
 
 func Test_Manager_syncBranch(t *testing.T) {
@@ -547,7 +350,7 @@ func Test_Manager_syncBranch(t *testing.T) {
 				},
 			}
 
-			man := NewManager(slog.New(slog.DiscardHandler), db, idx)
+			man := &Manager{db: db, index: idx}
 
 			err := man.syncBranch(context.Background(), branchID)
 
@@ -557,6 +360,7 @@ func Test_Manager_syncBranch(t *testing.T) {
 				require.NoError(t, err)
 			}
 
+			assert.Len(t, db.FetchDocumentUnsafeByBranchIDCalls(), 1)
 			require.Len(t, idx.ReplaceBranchCalls(), c.Replaced)
 			require.Len(t, idx.DeleteBranchCalls(), c.Deleted)
 
@@ -585,6 +389,7 @@ func Test_Manager_syncDocument(t *testing.T) {
 		BranchErr  error
 		DeleteErr  error
 		Err        error
+		DocFetched int
 		Replaced   int
 		DocDeleted int
 	}{
@@ -601,14 +406,16 @@ func Test_Manager_syncDocument(t *testing.T) {
 			DocDeleted: 1,
 		},
 		"Every branch is synced": {
-			Branches: branches,
-			Replaced: 2,
+			Branches:   branches,
+			DocFetched: 2,
+			Replaced:   2,
 		},
-		"Error returned by a branch sync": {
-			Branches:  branches,
-			BranchErr: assert.AnError,
-			Err:       assert.AnError,
-			Replaced:  1,
+		"Error returned by Index.ReplaceBranch": {
+			Branches:   branches,
+			BranchErr:  assert.AnError,
+			Err:        assert.AnError,
+			DocFetched: 1,
+			Replaced:   1,
 		},
 	}
 
@@ -634,7 +441,7 @@ func Test_Manager_syncDocument(t *testing.T) {
 				},
 			}
 
-			man := NewManager(slog.New(slog.DiscardHandler), db, idx)
+			man := &Manager{db: db, index: idx}
 
 			err := man.syncDocument(context.Background(), documentID)
 
@@ -644,6 +451,9 @@ func Test_Manager_syncDocument(t *testing.T) {
 				require.NoError(t, err)
 			}
 
+			assert.Len(t, db.FetchDocumentBranchesUnsafeCalls(), 1)
+			assert.Len(t, db.FetchDocumentUnsafeByBranchIDCalls(), c.DocFetched)
+			assert.Empty(t, idx.DeleteBranchCalls())
 			require.Len(t, idx.ReplaceBranchCalls(), c.Replaced)
 			require.Len(t, idx.DeleteDocumentCalls(), c.DocDeleted)
 

@@ -47,7 +47,13 @@ func (h *Handler) QueryDataSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := datasourceCore.Query(r.Context(), h.runners.Runner(*ds), query, *tr, ct)
+	qq, err := h.substitute(r, session, query)
+	if err != nil {
+		httpserver.RespondError(h.log, w, err)
+		return
+	}
+
+	res, err := datasourceCore.Query(r.Context(), h.runners.Runner(*ds), qq[0], *tr, ct)
 	if err != nil {
 		httpserver.RespondError(h.log, w, err)
 		return

@@ -4,7 +4,7 @@ import {
 	VisualizationCoreUnit,
 	type MetricConfig,
 } from "../utils"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import UnitSelect from "./UnitSelect.vue"
 import { DiffStatus } from "~/components/editor/diff/position-map"
 

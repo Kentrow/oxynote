@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	datasourceCore "github.com/oxynote/oxynote/server/core/internal/datasource"
+	"github.com/oxynote/oxynote/server/core/internal/variable"
 	"github.com/rs/xid"
 )
 
@@ -24,6 +25,9 @@ var _ DB = &DBMock{}
 //			FetchDataSourceFunc: func(ctx context.Context, id xid.ID, organizationID string) (*datasourceCore.DataSource, error) {
 //				panic("mock out the FetchDataSource method")
 //			},
+//			FetchVariableTreeFunc: func(ctx context.Context, organizationID string, userID string) (variable.Tree, error) {
+//				panic("mock out the FetchVariableTree method")
+//			},
 //		}
 //
 //		// use mockedDB in code that requires DB
@@ -33,6 +37,9 @@ var _ DB = &DBMock{}
 type DBMock struct {
 	// FetchDataSourceFunc mocks the FetchDataSource method.
 	FetchDataSourceFunc func(ctx context.Context, id xid.ID, organizationID string) (*datasourceCore.DataSource, error)
+
+	// FetchVariableTreeFunc mocks the FetchVariableTree method.
+	FetchVariableTreeFunc func(ctx context.Context, organizationID string, userID string) (variable.Tree, error)
 
 	// calls tracks calls to the methods.
 	calls struct {
@@ -45,8 +52,18 @@ type DBMock struct {
 			// OrganizationID is the organizationID argument value.
 			OrganizationID string
 		}
+		// FetchVariableTree holds details about calls to the FetchVariableTree method.
+		FetchVariableTree []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OrganizationID is the organizationID argument value.
+			OrganizationID string
+			// UserID is the userID argument value.
+			UserID string
+		}
 	}
-	lockFetchDataSource sync.RWMutex
+	lockFetchDataSource   sync.RWMutex
+	lockFetchVariableTree sync.RWMutex
 }
 
 // FetchDataSource calls FetchDataSourceFunc.
@@ -90,5 +107,49 @@ func (mock *DBMock) FetchDataSourceCalls() []struct {
 	mock.lockFetchDataSource.RLock()
 	calls = mock.calls.FetchDataSource
 	mock.lockFetchDataSource.RUnlock()
+	return calls
+}
+
+// FetchVariableTree calls FetchVariableTreeFunc.
+func (mock *DBMock) FetchVariableTree(ctx context.Context, organizationID string, userID string) (variable.Tree, error) {
+	callInfo := struct {
+		Ctx            context.Context
+		OrganizationID string
+		UserID         string
+	}{
+		Ctx:            ctx,
+		OrganizationID: organizationID,
+		UserID:         userID,
+	}
+	mock.lockFetchVariableTree.Lock()
+	mock.calls.FetchVariableTree = append(mock.calls.FetchVariableTree, callInfo)
+	mock.lockFetchVariableTree.Unlock()
+	if mock.FetchVariableTreeFunc == nil {
+		var (
+			treeOut variable.Tree
+			errOut  error
+		)
+		return treeOut, errOut
+	}
+	return mock.FetchVariableTreeFunc(ctx, organizationID, userID)
+}
+
+// FetchVariableTreeCalls gets all the calls that were made to FetchVariableTree.
+// Check the length with:
+//
+//	len(mockedDB.FetchVariableTreeCalls())
+func (mock *DBMock) FetchVariableTreeCalls() []struct {
+	Ctx            context.Context
+	OrganizationID string
+	UserID         string
+} {
+	var calls []struct {
+		Ctx            context.Context
+		OrganizationID string
+		UserID         string
+	}
+	mock.lockFetchVariableTree.RLock()
+	calls = mock.calls.FetchVariableTree
+	mock.lockFetchVariableTree.RUnlock()
 	return calls
 }

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it, vi } from "vitest"
 import { Matcher } from "@prometheus-io/codemirror-promql/dist/esm/types"
 import { EqlRegex, EqlSingle, Neq, NeqRegex } from "@prometheus-io/lezer-promql"
-import { TimeRangePreset } from "~/components/editor/blocks/metrics/utils"
+import { TimeRangePreset } from "~/utils/time-range"
 import { PrometheusDataSourceClient } from "./prometheus-utils"
 
 const NOW = new Date("2026-01-02T03:00:00.000Z")

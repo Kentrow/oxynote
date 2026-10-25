@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import { showToastMessage } from "../toast"
 
 const { fetchConsents, fetchPublicClient, revokeConsent } = useMCPAPI()
@@ -50,6 +50,8 @@ function scopeLabel(scope: string) {
 			return t("settings.mcp.scopes.documents-write")
 		case "data-sources:read":
 			return t("settings.mcp.scopes.data-sources-read")
+		case "offline_access":
+			return t("settings.mcp.scopes.offline-access")
 	}
 
 	// a scope this build has no name for is shown verbatim rather than

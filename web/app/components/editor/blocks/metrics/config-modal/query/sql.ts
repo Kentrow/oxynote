@@ -8,15 +8,19 @@ import {
 	keywordCompletionSource,
 } from "@codemirror/lang-sql"
 import { EditorView } from "@codemirror/view"
-import { resolveTimeRange, type TimeRangePreset } from "../../utils"
+import { resolveTimeRange } from "../../utils"
+import type { TimeRangePreset } from "~/utils/time-range"
 import type {
 	Completion,
 	CompletionContext,
 	CompletionSource,
 } from "@codemirror/autocomplete"
-import type { Extension } from "@codemirror/state"
+import type { EditorState, Extension } from "@codemirror/state"
 import { snippetCompletion } from "@codemirror/autocomplete"
-import { LanguageSupport } from "@codemirror/language"
+import { LanguageSupport, syntaxTree } from "@codemirror/language"
+import type { VariableTreeResponse } from "~/utils"
+import { referencedVariableValues } from "~/utils/variable"
+import { variableCompletions } from "./variable-completion"
 
 const QUERY_PROCESSING_DEBOUNCE_MS = 700
 
@@ -266,7 +270,92 @@ function mySQLCompletions(t: (key: string) => string): Completion[] {
 	}))
 }
 
-function completeDollar(context: CompletionContext, completions: Completion[]) {
+// keywords that only ever lead into another keyword or end a clause, so a
+// value never follows them
+const KEYWORDS_BEFORE_KEYWORD = new Set([
+	"ALL",
+	"ASC",
+	"CROSS",
+	"DESC",
+	"END",
+	"EXCEPT",
+	"FULL",
+	"GROUP",
+	"INNER",
+	"INTERSECT",
+	"IS",
+	"LEFT",
+	"NATURAL",
+	"ORDER",
+	"OUTER",
+	"PARTITION",
+	"RIGHT",
+	"UNION",
+])
+
+// tokens after which an expression can start. Punctuation is a comma or
+// a colon.
+const TOKENS_BEFORE_VALUE = new Set([
+	"Operator",
+	"Punctuation",
+	"(",
+	"[",
+	"{",
+	".",
+])
+
+// insideQuotes tells whether pos is within a string or a quoted name,
+// which may still be missing its closing quote
+function insideQuotes(
+	state: EditorState,
+	node: { name: string; from: number; to: number },
+	pos: number,
+) {
+	if (node.name !== "String" && node.name !== "QuotedIdentifier") {
+		return false
+	}
+
+	if (pos < node.to) {
+		return node.from < pos
+	}
+
+	const text = state.sliceDoc(node.from, node.to)
+
+	return text.length < 2 || !text.endsWith(text.charAt(0))
+}
+
+// acceptsVariable tells whether a variable can stand at pos. The SQL
+// grammar only splits a statement into tokens, so the token before pos
+// decides. A variable may follow an operator, an opening bracket, a comma,
+// a colon, a dot or a keyword that takes a value. It cannot start a statement or
+// follow a value, where only a keyword or an operator fits. Any text can
+// go inside a string or a quoted name.
+function acceptsVariable(state: EditorState, pos: number) {
+	const tree = syntaxTree(state)
+	if (insideQuotes(state, tree.resolveInner(pos, -1), pos)) {
+		return true
+	}
+
+	const end = state.sliceDoc(0, pos).trimEnd().length
+	if (end === 0) {
+		return false
+	}
+
+	const previous = tree.resolveInner(end, -1)
+	if (previous.name === "Keyword") {
+		const keyword = state.sliceDoc(previous.from, previous.to).toUpperCase()
+
+		return !KEYWORDS_BEFORE_KEYWORD.has(keyword)
+	}
+
+	return TOKENS_BEFORE_VALUE.has(previous.name)
+}
+
+function completeDollar(
+	context: CompletionContext,
+	completions: Completion[],
+	variables: Completion[],
+) {
 	// this supports ${...} and $... style completions
 	const match =
 		context.matchBefore(/\$[_A-Za-z][\w]*$/) ??
@@ -278,9 +367,13 @@ function completeDollar(context: CompletionContext, completions: Completion[]) {
 		return null
 	}
 
+	const from = match ? match.from : context.pos
+
 	return {
-		from: match ? match.from : context.pos,
-		options: completions,
+		from: from,
+		options: acceptsVariable(context.state, from)
+			? [...variables, ...completions]
+			: completions,
 		validFor: /^(\$[\w]*|\$\{[\w:]*)$/,
 	}
 }
@@ -347,6 +440,7 @@ export function useSQLQueryExtension(
 	dataSourceType: MaybeRefOrGetter<DataSourceType | null | undefined>,
 	_timeRange: MaybeRefOrGetter<TimeRangePreset | null | undefined>,
 	enable: MaybeRefOrGetter<boolean>,
+	variables: MaybeRefOrGetter<VariableTreeResponse>,
 ) {
 	const { useSQLMetadata } = useSQLDataSourceAPI()
 	const fetchSQLMetadata = useSQLMetadata(dataSourceId, enable)
@@ -425,7 +519,11 @@ export function useSQLQueryExtension(
 					}),
 					dialect.language.data.of({
 						autocomplete: (context: CompletionContext) =>
-							completeDollar(context, autocompletions(t)),
+							completeDollar(
+								context,
+								autocompletions(t),
+								variableCompletions(toValue(variables), t),
+							),
 					}),
 				]),
 				refreshOnFocus,
@@ -440,6 +538,7 @@ export function useSQLLegendExtension(
 	dataSourceId: MaybeRefOrGetter<string | null | undefined>,
 	timeRange: MaybeRefOrGetter<TimeRangePreset | null | undefined>,
 	enable: MaybeRefOrGetter<boolean>,
+	variables: MaybeRefOrGetter<VariableTreeResponse>,
 ) {
 	const debouncedQuery = refDebounced(
 		toRef(query),
@@ -462,6 +561,9 @@ export function useSQLLegendExtension(
 				to: resolvedTimeRange.to,
 				timeRangeKey: timeRangeVal,
 				q: debouncedQuery.value,
+				variableValues: referencedVariableValues(toValue(variables), [
+					debouncedQuery.value,
+				]),
 			}
 		},
 		enable,

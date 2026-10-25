@@ -106,4 +106,84 @@ describe("computeTokenDiff", () => {
 			["insert", "abc"],
 		])
 	})
+
+	it("emits a relink with the old target when only a link target changes", () => {
+		const oldTokens = [
+			...tokens("see "),
+			...tokens("docs", [link("https://a.test")]),
+		]
+		const newTokens = [
+			...tokens("see "),
+			...tokens("docs", [link("https://b.test")]),
+		]
+
+		const ops = computeTokenDiff(oldTokens, newTokens)
+
+		expect(ops).toEqual([
+			{ type: "equal", tokens: newTokens.slice(0, 4) },
+			{ type: "relink", tokens: newTokens.slice(4), oldHref: "https://a.test" },
+		])
+	})
+
+	it("relinks only the linked part of a word", () => {
+		const oldTokens = [
+			...tokens("doc", [link("https://a.test")]),
+			...tokens("s"),
+		]
+		const newTokens = [
+			...tokens("doc", [link("https://b.test")]),
+			...tokens("s"),
+		]
+
+		expect(shape(oldTokens, newTokens)).toEqual([
+			["relink", "doc"],
+			["equal", "s"],
+		])
+	})
+
+	it("keeps the old target of each touching link", () => {
+		const oldTokens = [
+			...tokens("foo", [link("https://a.test")]),
+			...tokens("bar", [link("https://b.test")]),
+		]
+		const newTokens = [
+			...tokens("foo", [link("https://c.test")]),
+			...tokens("bar", [link("https://d.test")]),
+		]
+
+		const ops = computeTokenDiff(oldTokens, newTokens)
+
+		expect(ops).toEqual([
+			{
+				type: "relink",
+				tokens: newTokens.slice(0, 3),
+				oldHref: "https://a.test",
+			},
+			{ type: "relink", tokens: newTokens.slice(3), oldHref: "https://b.test" },
+		])
+	})
+
+	it("emits a delete and insert pair when a link target changes with another mark", () => {
+		const oldTokens = tokens("docs", [link("https://a.test")])
+		const newTokens = tokens("docs", [{ type: "bold" }, link("https://b.test")])
+
+		expect(shape(oldTokens, newTokens)).toEqual([
+			["delete", "docs"],
+			["insert", "docs"],
+		])
+	})
+
+	it("emits a delete and insert pair when text becomes a link", () => {
+		const oldTokens = tokens("docs")
+		const newTokens = tokens("docs", [link("https://b.test")])
+
+		expect(shape(oldTokens, newTokens)).toEqual([
+			["delete", "docs"],
+			["insert", "docs"],
+		])
+	})
 })
+
+function link(href: string): JSONContent {
+	return { type: "link", attrs: { href: href } }
+}

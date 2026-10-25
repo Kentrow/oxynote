@@ -3,9 +3,10 @@ import type { MetricConfig } from "../utils"
 import LegendEditor from "./query/LegendEditor.vue"
 import QueryEditor from "./query/QueryEditor.vue"
 import ConfigField from "../ConfigField.vue"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import HelpPopoverContent from "./query-help/HelpPopoverContent.vue"
 import { DiffStatus } from "~/components/editor/diff/position-map"
+import { useMetricVariables } from "../variables"
 
 type QueryEntry = NonNullable<MetricConfig["queries"]>[number]
 
@@ -27,7 +28,11 @@ const { t } = useI18n({ useScope: "global" })
 const { isEditable } = useEditorMeta()
 const { fetchDataSources } = useDataSourceAPI()
 const editorStore = useEditorStore()
+const metricVariables = useMetricVariables()
 
+const timeRange = computed(() =>
+	metricVariables.timeRange(metricConfig.value.timeRange),
+)
 const isEditingDisabled = computed(
 	() => !isEditable.value || editorStore.reviewableDiffActive,
 )
@@ -170,7 +175,7 @@ function deleteQuery(index: number) {
 						<QueryEditor
 							:model-value="metricConfig.queries[0]!.query"
 							:data-source-id="metricConfig.dataSourceId"
-							:time-range="metricConfig.timeRange"
+							:time-range="timeRange"
 							:diff-status="
 								diffQueryEntries[0]?.queryChanged ? DiffStatus.Added : null
 							"
@@ -185,7 +190,7 @@ function deleteQuery(index: number) {
 							"
 							:model-value="diffQueryEntries[0].oldQuery.query"
 							:data-source-id="metricConfig.dataSourceId"
-							:time-range="metricConfig.timeRange"
+							:time-range="timeRange"
 							:diff-status="DiffStatus.Removed"
 						/>
 					</ConfigField>
@@ -200,7 +205,7 @@ function deleteQuery(index: number) {
 						<LegendEditor
 							:model-value="metricConfig.queries[0]!.legendFormat"
 							:data-source-id="metricConfig.dataSourceId"
-							:time-range="metricConfig.timeRange"
+							:time-range="timeRange"
 							:query="metricConfig.queries[0]!.query"
 							:diff-status="
 								diffQueryEntries[0]?.legendChanged ? DiffStatus.Added : null
@@ -216,7 +221,7 @@ function deleteQuery(index: number) {
 							"
 							:model-value="diffQueryEntries[0].oldQuery.legendFormat"
 							:data-source-id="metricConfig.dataSourceId"
-							:time-range="metricConfig.timeRange"
+							:time-range="timeRange"
 							:query="diffQueryEntries[0].oldQuery.query"
 							:diff-status="DiffStatus.Removed"
 						/>
@@ -250,7 +255,7 @@ function deleteQuery(index: number) {
 									<QueryEditor
 										:model-value="entry.newQuery.query"
 										:data-source-id="metricConfig.dataSourceId"
-										:time-range="metricConfig.timeRange"
+										:time-range="timeRange"
 										:diff-status="DiffStatus.Added"
 									/>
 								</ConfigField>
@@ -261,7 +266,7 @@ function deleteQuery(index: number) {
 									<LegendEditor
 										:model-value="entry.newQuery.legendFormat"
 										:data-source-id="metricConfig.dataSourceId"
-										:time-range="metricConfig.timeRange"
+										:time-range="timeRange"
 										:query="entry.newQuery.query"
 										:diff-status="DiffStatus.Added"
 									/>
@@ -290,7 +295,7 @@ function deleteQuery(index: number) {
 									<QueryEditor
 										:model-value="entry.oldQuery.query"
 										:data-source-id="metricConfig.dataSourceId"
-										:time-range="metricConfig.timeRange"
+										:time-range="timeRange"
 										:diff-status="DiffStatus.Removed"
 									/>
 								</ConfigField>
@@ -301,7 +306,7 @@ function deleteQuery(index: number) {
 									<LegendEditor
 										:model-value="entry.oldQuery.legendFormat"
 										:data-source-id="metricConfig.dataSourceId"
-										:time-range="metricConfig.timeRange"
+										:time-range="timeRange"
 										:query="entry.oldQuery.query"
 										:diff-status="DiffStatus.Removed"
 									/>
@@ -343,14 +348,14 @@ function deleteQuery(index: number) {
 									<QueryEditor
 										:model-value="entry.newQuery.query"
 										:data-source-id="metricConfig.dataSourceId"
-										:time-range="metricConfig.timeRange"
+										:time-range="timeRange"
 										:diff-status="entry.queryChanged ? DiffStatus.Added : null"
 									/>
 									<QueryEditor
 										v-if="entry.queryChanged && entry.oldQuery"
 										:model-value="entry.oldQuery.query"
 										:data-source-id="metricConfig.dataSourceId"
-										:time-range="metricConfig.timeRange"
+										:time-range="timeRange"
 										:diff-status="DiffStatus.Removed"
 									/>
 								</ConfigField>
@@ -361,7 +366,7 @@ function deleteQuery(index: number) {
 									<LegendEditor
 										:model-value="entry.newQuery.legendFormat"
 										:data-source-id="metricConfig.dataSourceId"
-										:time-range="metricConfig.timeRange"
+										:time-range="timeRange"
 										:query="entry.newQuery.query"
 										:diff-status="entry.legendChanged ? DiffStatus.Added : null"
 									/>
@@ -369,7 +374,7 @@ function deleteQuery(index: number) {
 										v-if="entry.legendChanged && entry.oldQuery"
 										:model-value="entry.oldQuery.legendFormat"
 										:data-source-id="metricConfig.dataSourceId"
-										:time-range="metricConfig.timeRange"
+										:time-range="timeRange"
 										:query="entry.oldQuery.query"
 										:diff-status="DiffStatus.Removed"
 									/>
@@ -431,7 +436,7 @@ function deleteQuery(index: number) {
 								<QueryEditor
 									:model-value="query.query"
 									:data-source-id="metricConfig.dataSourceId"
-									:time-range="metricConfig.timeRange"
+									:time-range="timeRange"
 									@update:model-value="
 										(v: string) => updateQueryField(index, 'query', v)
 									"
@@ -446,7 +451,7 @@ function deleteQuery(index: number) {
 								<LegendEditor
 									:model-value="query.legendFormat"
 									:data-source-id="metricConfig.dataSourceId"
-									:time-range="metricConfig.timeRange"
+									:time-range="timeRange"
 									:query="query.query"
 									@update:model-value="
 										(v: string) => updateQueryField(index, 'legendFormat', v)

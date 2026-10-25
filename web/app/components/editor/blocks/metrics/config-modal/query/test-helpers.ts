@@ -40,6 +40,7 @@ export function stubPrometheusAPI(mock: Mock, data: PrometheusStubData = {}) {
 	const captured: {
 		labelValuesParams?: Ref<PrometheusLabelValuesParams | null | undefined>
 		labelsParams?: MaybeRefOrGetter<PrometheusLabelParams | null | undefined>
+		seriesParams?: MaybeRefOrGetter<PrometheusSeriesParams | null | undefined>
 	} = {}
 
 	mock.mockReturnValue({
@@ -60,7 +61,14 @@ export function stubPrometheusAPI(mock: Mock, data: PrometheusStubData = {}) {
 
 			return api.labelValues
 		},
-		usePrometheusSeries: () => api.series,
+		usePrometheusSeries: (
+			_id: unknown,
+			params: MaybeRefOrGetter<PrometheusSeriesParams | null | undefined>,
+		) => {
+			captured.seriesParams = params
+
+			return api.series
+		},
 	})
 
 	return { api, captured }
@@ -98,4 +106,72 @@ export function stubSQLAPI(mock: Mock, data: SQLStubData = {}) {
 	})
 
 	return { api, captured }
+}
+
+// a group holding a list variable on its default and a text variable the
+// user has set
+export function variableTree(): VariableTreeResponse {
+	const variable = {
+		organizationId: "org-1",
+		groupId: "group-1",
+		description: null,
+		builtin: false,
+		createdAt: "2026-01-01T00:00:00Z",
+		createdBy: null,
+	}
+
+	return [
+		{
+			id: "group-1",
+			organizationId: "org-1",
+			groupName: "Deploys",
+			color: "#000000",
+			sortIndex: 0,
+			builtin: false,
+			createdAt: "2026-01-01T00:00:00Z",
+			createdBy: null,
+			variables: [
+				{
+					...variable,
+					id: "var-env",
+					key: "env",
+					name: "Environment",
+					type: "list",
+					defaultValue: "opt-prod",
+					sortIndex: 0,
+					value: null,
+					options: [
+						{
+							id: "opt-prod",
+							variableId: "var-env",
+							value: "prod",
+							sortIndex: 0,
+						},
+						{
+							id: "opt-dev",
+							variableId: "var-env",
+							value: "dev",
+							sortIndex: 1,
+						},
+					],
+				},
+				{
+					...variable,
+					id: "var-window",
+					key: "window",
+					name: "Window",
+					type: "text",
+					defaultValue: "5m",
+					sortIndex: 1,
+					value: "1h",
+					options: [],
+				},
+			],
+		},
+	]
+}
+
+// a t that shows its interpolation values, so a test can tell them apart
+export function interpolatingT(key: string, named?: Record<string, unknown>) {
+	return named ? `${key} ${Object.values(named).join(" ")}` : key
 }

@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { nodeViewProps, NodeViewWrapper } from "@tiptap/vue-3"
 import { computePosition, flip, offset, shift } from "@floating-ui/dom"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import { DiffStatus } from "~/components/editor/diff/position-map"
 import DiffChangeMarker from "~/components/editor/diff/DiffChangeMarker.vue"
 import FigmaDiffDetails from "./FigmaDiffDetails.vue"

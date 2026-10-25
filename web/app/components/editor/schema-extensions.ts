@@ -4,7 +4,7 @@
  */
 import type { Extensions } from "@tiptap/core"
 import { nanoid } from "nanoid"
-import { cn } from "@/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import Heading from "@tiptap/extension-heading"
 import Blockquote from "@tiptap/extension-blockquote"
 import Paragraph from "@tiptap/extension-paragraph"

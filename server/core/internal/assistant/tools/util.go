@@ -14,13 +14,26 @@ const (
 	_documentIDDescription = "The document id."
 
 	// _branchIDDescription describes a branch_id argument.
-	_branchIDDescription = "The branch id, from list_documents, search_documents or get_document. A protected branch refuses writes."
+	_branchIDDescription = "The branch id, from list_documents, search_documents or get_document."
+
+	// _writeBranchIDDescription describes the branch_id argument of a tool
+	// that writes to the branch.
+	_writeBranchIDDescription = _branchIDDescription + " A protected branch refuses writes."
 
 	// _dataSourceIDDescription describes a data_source_id argument.
 	_dataSourceIDDescription = "The data source id, from list_data_sources."
 
 	// _tagIDDescription describes a tag_id argument.
 	_tagIDDescription = "The tag id, from list_tags or a document's tags."
+
+	// _variableGroupIDDescription describes a group_id argument.
+	_variableGroupIDDescription = "The variable group id, from list_variables."
+
+	// _variableIDDescription describes a variable_id argument.
+	_variableIDDescription = "The variable id, from list_variables."
+
+	// _variableDefaultDescription describes a variable's default argument.
+	_variableDefaultDescription = "What everyone sees until they set their own: a decimal, a time range preset or text. Not for a list."
 
 	// _hookIDDescription describes a hook_id argument.
 	_hookIDDescription = "The hook id, from list_hooks."

@@ -2,11 +2,13 @@ package markup
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/oxynote/oxynote/server/core/internal/assistant/icon"
 	"github.com/oxynote/oxynote/server/core/internal/document"
 	"github.com/oxynote/oxynote/server/core/pkg/testutil"
 	"github.com/stretchr/testify/assert"
@@ -31,13 +33,6 @@ func Test_Build(t *testing.T) {
 		require.True(t, ok)
 
 		return strings.Replace(Render([]document.Block{stored}), old, replacement, 1)
-	}
-
-	stored := func(id string) document.Block {
-		b, ok := root.FindByUID(id)
-		require.True(t, ok)
-
-		return b
 	}
 
 	uids := func(blocks ...document.Block) []string {
@@ -93,7 +88,7 @@ func Test_Build(t *testing.T) {
 				assert.Equal(t, "nc-p1", got[0].Attrs[document.AttrCommentID])
 			},
 		},
-		"Titled code keeps its parts' uids and comments": {
+		"Titled code keeps the uids and comments of its parts": {
 			Markup: edit("tc1", "POST /login", "POST /signin"),
 			Stored: root,
 			Check: func(t *testing.T, got []document.Block) {
@@ -117,11 +112,14 @@ func Test_Build(t *testing.T) {
 			Stored: root,
 			Check: func(t *testing.T, got []document.Block) {
 				t.Helper()
+
+				right, ok := root.FindByUID("sr")
+				require.True(t, ok)
 				assert.Equal(t, []string{"sl", "sr"}, uids(got[0].Content...))
-				assert.Equal(t, stored("sr"), got[0].Content[1])
+				assert.Equal(t, right, got[0].Content[1])
 			},
 		},
-		"Parameter row keeps its parts' uids": {
+		"Parameter row keeps the uids of its parts": {
 			Markup: edit("pl1", `type="string"`, `type="email"`),
 			Stored: root,
 			Check: func(t *testing.T, got []document.Block) {
@@ -137,7 +135,10 @@ func Test_Build(t *testing.T) {
 			Stored: root,
 			Check: func(t *testing.T, got []document.Block) {
 				t.Helper()
-				assert.Equal(t, stored("pi1"), got[0].Content[1])
+
+				row, ok := root.FindByUID("pi1")
+				require.True(t, ok)
+				assert.Equal(t, row, got[0].Content[1])
 			},
 		},
 		"Metric keeps its simulation flag with the same preset": {
@@ -148,6 +149,19 @@ func Test_Build(t *testing.T) {
 				assert.Equal(t, true, got[0].Attrs[document.AttrSimulationActive])
 				assert.Equal(t, "wide", got[0].Attrs[document.AttrWidth])
 			},
+		},
+		"Metric re-sent without its window keeps it": {
+			Markup: edit("mb1", `"timeRange":"last_1_hour",`, ""),
+			Stored: root,
+			Check: func(t *testing.T, got []document.Block) {
+				t.Helper()
+				assert.Equal(t, "last_1_hour", got[0].Attrs[document.AttrTimeRange])
+				assert.Equal(t, "1m", got[0].Attrs[document.AttrRefreshInterval])
+			},
+		},
+		"New metric follows the built-in variables": {
+			Markup: `<metric>{}</metric>`,
+			Result: "<metric>{\"refreshInterval\":\"$metric_refresh\",\"timeRange\":\"$metric_range\"}</metric>\n",
 		},
 		"Metric drops a simulation flag the markup sent": {
 			Markup: `<metric>{"simulationActive":true,"uid":"x","nodeCommentId":"c"}</metric>`,
@@ -170,7 +184,7 @@ func Test_Build(t *testing.T) {
 			Markup: "<p>\n  Wrapped\n    text with <strong>strong</strong>\n  words.\n</p>",
 			Result: "<p>Wrapped text with <b>strong</b> words.</p>\n",
 		},
-		"Spaces on the text's own line stay": {
+		"Spaces on the line of the text stay": {
 			Markup: "<p> a b </p>",
 			Result: "<p> a b </p>\n",
 		},
@@ -178,7 +192,7 @@ func Test_Build(t *testing.T) {
 			Markup: "<p><b>a<b>b</b></b></p>",
 			Result: "<p><b>ab</b></p>\n",
 		},
-		"Entry text wrapped in a p is the entry's text": {
+		"Entry text wrapped in a p is the text of the entry": {
 			Markup: "<ul><li>\n  <p>x</p>\n</li></ul>",
 			Result: "<ul>\n  <li>x</li>\n</ul>\n",
 		},
@@ -191,9 +205,26 @@ func Test_Build(t *testing.T) {
 		"Id used twice":           {Markup: `<p id="p2">x</p><p id="p2">y</p>`, Stored: root, Err: errors.New(`line 1: id "p2" is used twice; leave it out of the copy`)},
 		"Text outside an element": {Markup: "hello", Err: errors.New("line 1: text in the markup has to sit in an element such as <p>")},
 		"Text in a container":     {Markup: "<callout>hi</callout>", Err: errors.New("line 1: text in <callout> has to sit in an element such as <p>")},
-		"Tag in a heading":        {Markup: "<h2>a <b>b</b></h2>", Err: errors.New("line 1: a heading takes plain text, so <b> is not allowed in it")},
-		"Block inside text":       {Markup: "<p>a <hr/></p>", Err: errors.New("line 1: <hr> is a block; it cannot sit inside text")},
-		"Link to a script":        {Markup: `<p><a href=" Java	Script:alert(1)">x</a></p>`, Err: errors.New("line 1: a link cannot use javascript:; link to a web address instead")},
+		"Callout icon the picker lacks": {
+			Markup: `<callout icon="lucide:rocket"><p>x</p></callout>`,
+			Err:    fmt.Errorf("line 1: %w", icon.Validate("lucide:rocket")),
+		},
+		"Callout with the default icon": {
+			Markup: `<callout icon="lucide:text"><p>x</p></callout>`,
+			Result: "<callout icon=\"lucide:text\">\n  <p>x</p>\n</callout>\n",
+		},
+		"Kept callout keeps an icon the picker lacks": {
+			Markup: `<callout id="c1" icon="lucide:info"><p>x</p></callout>`,
+			Stored: document.RootBlock{Content: []document.Block{{
+				Type:    document.BlockNodeCalloutBlock,
+				Attrs:   document.Attributes{document.AttrUID: "c1", document.AttrIcon: "lucide:info"},
+				Content: []document.Block{{Type: document.BlockNodeParagraph}},
+			}}},
+			Result: "<callout icon=\"lucide:info\">\n  <p>x</p>\n</callout>\n",
+		},
+		"Tag in a heading":  {Markup: "<h2>a <b>b</b></h2>", Err: errors.New("line 1: a heading takes plain text, so <b> is not allowed in it")},
+		"Block inside text": {Markup: "<p>a <hr/></p>", Err: errors.New("line 1: <hr> is a block; it cannot sit inside text")},
+		"Link to a script":  {Markup: `<p><a href=" Java	Script:alert(1)">x</a></p>`, Err: errors.New("line 1: a link cannot use javascript:; link to a web address instead")},
 		// links a person stored may use any other scheme, or not even
 		// parse, and a write that keeps them has to go through.
 		"Links of other schemes stay": {
@@ -204,9 +235,17 @@ func Test_Build(t *testing.T) {
 			Markup: "<ul><li>Item \n  <ul><li>x</li></ul>\n</li></ul>",
 			Result: "<ul>\n  <li>Item \n    <ul>\n      <li>x</li>\n    </ul>\n  </li>\n</ul>\n",
 		},
-		"List of the wrong entries":  {Markup: "<ul><task>x</task></ul>", Err: errors.New("line 1: <ul> holds only <li>, not <task>")},
-		"Split doc without sides":    {Markup: "<split_doc><right/></split_doc>", Err: errors.New("line 1: <split_doc> holds a <left> and then a <right>")},
-		"Text in a split doc":        {Markup: "<split_doc>x</split_doc>", Err: errors.New("line 1: text in <split_doc> has to sit in <left> or <right>")},
+		"List of the wrong entries": {Markup: "<ul><task>x</task></ul>", Err: errors.New("line 1: <ul> holds only <li>, not <task>")},
+		"Split doc without sides":   {Markup: "<split_doc><right/></split_doc>", Err: errors.New("line 1: <split_doc> holds a <left> and then a <right>")},
+		"Text in a split doc":       {Markup: "<split_doc>x</split_doc>", Err: errors.New("line 1: text in <split_doc> has to sit in <left> or <right>")},
+		"Split doc with an h2 title": {
+			Markup: "<split_doc><left><h2>T</h2><p>x</p></left><right><mermaid>graph LR; A-->B;</mermaid></right></split_doc>",
+			Err:    errors.New("line 1: <left> opens with an <h1>, the title of the split doc"),
+		},
+		"Split doc without a title": {
+			Markup: "<split_doc><left><p>x</p></left><right><mermaid>graph LR; A-->B;</mermaid></right></split_doc>",
+			Err:    errors.New("line 1: <left> opens with an <h1>, the title of the split doc"),
+		},
 		"Params of the wrong rows":   {Markup: `<params header="h"><p>x</p></params>`, Err: errors.New("line 1: <params> holds only <param>, not <p>")},
 		"Text in params":             {Markup: `<params header="h">x</params>`, Err: errors.New("line 1: text in <params> has to sit in a <param>")},
 		"Param with an unknown id":   {Markup: `<params header="h"><param id="nope" name="a"/></params>`, Stored: root, Err: errors.New(`line 1: id "nope" is not a block this write can keep; leave id out for a new block`)},
@@ -230,7 +269,7 @@ func Test_Build(t *testing.T) {
 			Err:    errors.New(`id "li1p" is kept twice: by its own element and as part of another one; leave it out of one of them`),
 		},
 		"Side outside a split doc": {Markup: "<left></left>", Err: errors.New("line 1: <left> belongs inside <split_doc>")},
-		"Param outside params":     {Markup: `<param name="a"/>`, Err: errors.New("line 1: <param> belongs inside <params>")},
+		"Param outside params":     {Markup: `<param name="a"/>`, Err: errors.New("line 1: <param> belongs inside <params>; to add one, send the whole <params> to replace_blocks")},
 		"Inline tag at the top":    {Markup: "<b>x</b>", Err: errors.New("line 1: <b> is inline; put it inside a <p>")},
 		"Entry with text after a list": {
 			Markup: "<ul><li>a<ul><li>b</li></ul>c</li></ul>",
@@ -292,7 +331,7 @@ func Test_elements(t *testing.T) {
 		Result string
 		Err    error
 	}{
-		"Elements in order, blank text dropped": {
+		"Elements in order and blank text dropped": {
 			Markup: "<p>a</p>\n  <hr/>\n",
 			Result: `p@1["a"] hr@2`,
 		},
@@ -325,21 +364,49 @@ func Test_elements(t *testing.T) {
 func Test_newBlock(t *testing.T) {
 	t.Parallel()
 
-	stored := document.Block{
-		Type:  document.BlockNodeParagraph,
-		Attrs: document.Attributes{document.AttrUID: "p1", document.AttrCommentID: "c1", "align": "left"},
+	cc := map[string]struct {
+		Type   document.BlockNodeType
+		Stored document.Block
+		Result document.Block
+
+		// NewUID, when set, expects a fresh uid as the only attribute in
+		// place of Result.
+		NewUID bool
+	}{
+		"Stored uid and block comment kept": {
+			Type: document.BlockNodeHeading,
+			Stored: document.Block{
+				Type:  document.BlockNodeParagraph,
+				Attrs: document.Attributes{document.AttrUID: "p1", document.AttrCommentID: "c1", "align": "left"},
+			},
+			Result: document.Block{
+				Type:  document.BlockNodeHeading,
+				Attrs: document.Attributes{document.AttrUID: "p1", document.AttrCommentID: "c1"},
+			},
+		},
+		"Nothing stored": {
+			Type:   document.BlockNodeParagraph,
+			NewUID: true,
+		},
 	}
 
-	got := newBlock(document.BlockNodeHeading, stored, nil)
-	assert.Equal(t, document.Block{
-		Type:  document.BlockNodeHeading,
-		Attrs: document.Attributes{document.AttrUID: "p1", document.AttrCommentID: "c1"},
-	}, got)
+	for cn, c := range cc {
+		t.Run(cn, func(t *testing.T) {
+			t.Parallel()
 
-	got = newBlock(document.BlockNodeParagraph, document.Block{}, nil)
-	uid, _ := got.UID()
-	assert.NotEmpty(t, uid)
-	assert.Len(t, got.Attrs, 1)
+			got := newBlock(c.Type, c.Stored, nil)
+
+			if c.NewUID {
+				uid, _ := got.UID()
+				assert.NotEmpty(t, uid)
+				assert.Len(t, got.Attrs, 1)
+
+				return
+			}
+
+			assert.Equal(t, c.Result, got)
+		})
+	}
 }
 
 func Test_titleBlock(t *testing.T) {
@@ -377,9 +444,23 @@ func Test_keepIfUnchanged(t *testing.T) {
 	same := document.Block{Type: document.BlockNodeParagraph, Attrs: document.Attributes{document.AttrUID: "p"}, Content: stored.Content}
 	changed := document.Block{Type: document.BlockNodeParagraph, Attrs: document.Attributes{document.AttrUID: "p"}}
 
-	assert.Equal(t, stored, keepIfUnchanged(stored, same))
-	assert.Equal(t, changed, keepIfUnchanged(stored, changed))
-	assert.Equal(t, same, keepIfUnchanged(document.Block{}, same))
+	cc := map[string]struct {
+		Stored document.Block
+		Built  document.Block
+		Result document.Block
+	}{
+		"Same rendering keeps the stored block": {Stored: stored, Built: same, Result: stored},
+		"Changed rendering takes the built one": {Stored: stored, Built: changed, Result: changed},
+		"Nothing stored":                        {Built: same, Result: same},
+	}
+
+	for cn, c := range cc {
+		t.Run(cn, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, c.Result, keepIfUnchanged(c.Stored, c.Built))
+		})
+	}
 }
 
 func Test_findDuplicateUID(t *testing.T) {
@@ -389,10 +470,28 @@ func Test_findDuplicateUID(t *testing.T) {
 		return document.Block{Attrs: document.Attributes{document.AttrUID: uid}, Content: content}
 	}
 
-	_, found := findDuplicateUID([]document.Block{block("a", block("b")), block("c")}, map[string]bool{})
-	assert.False(t, found)
+	cc := map[string]struct {
+		Blocks []document.Block
+		UID    string
+		Found  bool
+	}{
+		"Every uid held once": {
+			Blocks: []document.Block{block("a", block("b")), block("c")},
+		},
+		"Nested uid held twice": {
+			Blocks: []document.Block{block("a", block("b")), block("c", block("b"))},
+			UID:    "b",
+			Found:  true,
+		},
+	}
 
-	uid, found := findDuplicateUID([]document.Block{block("a", block("b")), block("c", block("b"))}, map[string]bool{})
-	assert.True(t, found)
-	assert.Equal(t, "b", uid)
+	for cn, c := range cc {
+		t.Run(cn, func(t *testing.T) {
+			t.Parallel()
+
+			uid, found := findDuplicateUID(c.Blocks, map[string]bool{})
+			assert.Equal(t, c.Found, found)
+			assert.Equal(t, c.UID, uid)
+		})
+	}
 }

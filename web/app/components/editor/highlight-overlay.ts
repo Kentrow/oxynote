@@ -1,4 +1,4 @@
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 
 // HighlightOverlayRect is the box the panel covers, in viewport
 // coordinates. A DOMRect satisfies it, and so does a box assembled from

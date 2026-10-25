@@ -2,10 +2,12 @@ import { createRequire } from "node:module"
 import { describe, it, vi } from "vitest"
 import { toValue } from "vue"
 import type { CompletionSource } from "@codemirror/autocomplete"
-import { TimeRangePreset } from "../../utils"
+import { TimeRangePreset } from "~/utils/time-range"
 import {
 	installAutoImportGlobals,
+	interpolatingT,
 	stubPrometheusAPI,
+	variableTree,
 	type PrometheusStubData,
 } from "./test-helpers"
 import { usePromQLLegendExtension, usePromQLQueryExtension } from "./promql"
@@ -31,7 +33,7 @@ vi.mock("~/composables/api/usePrometheusDataSourceAPI", () => ({
 	default: prometheusAPIMock,
 }))
 
-const t = (key: string) => key
+const t = interpolatingT
 
 const PRESET_LABELS = [
 	"$__interval",
@@ -45,13 +47,17 @@ const PRESET_LABELS = [
 	"1d",
 ]
 
-function makeComplete(data?: PrometheusStubData) {
+function makeComplete(
+	data?: PrometheusStubData,
+	variables: VariableTreeResponse = [],
+) {
 	const stub = stubPrometheusAPI(prometheusAPIMock, data)
 	const { extensions } = usePromQLQueryExtension(
 		t,
 		() => "ds-1",
 		() => TimeRangePreset.Last1Hour,
 		() => true,
+		() => variables,
 	)
 
 	async function complete(doc: string, pos: number) {
@@ -78,6 +84,7 @@ function makeLegend(
 		query?: string | null
 		timeRange?: TimeRangePreset | null
 		data?: PrometheusStubData
+		variables?: VariableTreeResponse
 	} = {},
 ) {
 	const stub = stubPrometheusAPI(prometheusAPIMock, options.data)
@@ -87,6 +94,7 @@ function makeLegend(
 		() =>
 			"timeRange" in options ? options.timeRange : TimeRangePreset.Last1Hour,
 		() => true,
+		() => options.variables ?? [],
 	)
 
 	return { ...stub, ...legend }
@@ -195,9 +203,125 @@ describe("usePromQLQueryExtension", () => {
 		})
 		expect(byLabel.get("1m")?.type).toBe("constant")
 	})
+
+	describe("when variables exist", () => {
+		it.for([
+			{ name: "offers the variables as a number", doc: "up > $" },
+			{ name: "offers the variables as a range", doc: "rate(up[$" },
+			{ name: "offers the variables as an offset", doc: "up offset $" },
+			{ name: "offers the variables as an argument", doc: "topk($" },
+			{ name: "offers the variables as a metric name", doc: "$" },
+			{ name: "offers the variables as a label name", doc: "up{$" },
+			{ name: "offers the variables as a grouping label", doc: "sum by ($" },
+			{ name: "offers the variables inside a label value", doc: 'up{env="$' },
+		])("$name", async ({ doc }, { expect }) => {
+			const { complete } = makeComplete(undefined, variableTree())
+
+			const res = await complete(doc, doc.length)
+			const labels = res?.options.map((o) => o.label) ?? []
+
+			expect(labels).toContain("$env")
+			expect(labels).toContain("$window")
+			expect(res?.from).toBe(doc.length - 1)
+			expect(res?.to).toBe(doc.length)
+		})
+
+		it.for([
+			{ name: "refuses the variables in place of an operator", doc: "up $" },
+			{
+				name: "refuses the variables after a complete offset",
+				doc: "up offset 5m $",
+			},
+			{
+				name: "refuses the variables as an unquoted label value",
+				doc: "up{env=$",
+			},
+			{ name: "refuses the variables inside a comment", doc: "up # $" },
+		])("$name", async ({ doc }, { expect }) => {
+			const { complete } = makeComplete(undefined, variableTree())
+
+			const res = await complete(doc, doc.length)
+
+			expect(res?.options.map((o) => o.label) ?? []).not.toContain("$env")
+		})
+
+		it("adds the variables to the base completions before anything is typed", async ({
+			expect,
+		}) => {
+			const { complete } = makeComplete(undefined, variableTree())
+
+			const res = await complete("rate(", 5)
+			const labels = res?.options.map((o) => o.label) ?? []
+
+			expect(labels).toContain("$env")
+			expect(labels).toContain("sum")
+		})
+
+		it("leaves the variables out while another word is typed", async ({
+			expect,
+		}) => {
+			const { complete } = makeComplete(undefined, variableTree())
+
+			const res = await complete("up > su", 7)
+			const labels = res?.options.map((o) => o.label) ?? []
+
+			expect(labels).not.toContain("$env")
+			expect(labels).toContain("sum")
+		})
+
+		it("keys a lookup by the values its matchers reference", async ({
+			expect,
+		}) => {
+			const { captured, complete } = makeComplete(undefined, variableTree())
+			const doc = 'up{env="$env",job="'
+
+			await complete(doc, doc.length)
+
+			expect(toValue(captured.labelValuesParams)).toMatchObject({
+				label: "job",
+				variableValues: { env: "prod" },
+			})
+		})
+
+		it("describes a variable by its name and the value it resolves to", async ({
+			expect,
+		}) => {
+			const { complete } = makeComplete(undefined, variableTree())
+
+			const res = await complete("up > $", 6)
+			const byLabel = new Map(res?.options.map((o) => [o.label, o]))
+
+			expect(byLabel.get("$env")).toMatchObject({
+				type: "variable",
+				detail: t("general.variable-types.list"),
+				info: t("editor.metrics.config.query-info.variable", {
+					value: "prod",
+				}),
+			})
+			expect(byLabel.get("$window")?.info).toBe(
+				t("editor.metrics.config.query-info.variable", { value: "1h" }),
+			)
+		})
+	})
 })
 
 describe("usePromQLLegendExtension", () => {
+	it("keys the lookups by the values their selectors reference", ({
+		expect,
+	}) => {
+		const { captured } = makeLegend({
+			query: 'rate(up{env="$env"}[5m])',
+			variables: variableTree(),
+		})
+
+		expect(toValue(captured.labelsParams)?.variableValues).toEqual({
+			env: "prod",
+		})
+		expect(toValue(captured.seriesParams)?.variableValues).toEqual({
+			env: "prod",
+		})
+	})
+
 	it("requests labels for the selectors extracted from the query", ({
 		expect,
 	}) => {

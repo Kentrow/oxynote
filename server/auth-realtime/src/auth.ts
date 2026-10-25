@@ -827,6 +827,7 @@ export function createAuth({
 								"documents:read",
 								"documents:write",
 								"data-sources:read",
+								"offline_access",
 							],
 							// MCP clients self-register per RFC 7591 before
 							// the user has any session, so registration must

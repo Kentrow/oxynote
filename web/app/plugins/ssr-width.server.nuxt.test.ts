@@ -1,5 +1,5 @@
 import { describe, it, vi } from "vitest"
-import { SIDEBAR_MOBILE_BREAKPOINT } from "~/components/shadcn/ui/sidebar/constants"
+import { SIDEBAR_MOBILE_BREAKPOINT } from "#layers/ui/app/components/shadcn/ui/sidebar/constants"
 import plugin from "./ssr-width.server"
 
 describe("ssr-width.server", () => {

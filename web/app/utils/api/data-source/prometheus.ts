@@ -9,6 +9,7 @@ export interface PrometheusTimeRange {
 	from?: Date | string
 	to?: Date | string
 	timeRangeKey?: string // key representing a preset time range (for caching; local)
+	variableValues?: Record<string, string> // values of the variables the request references, sent in place of the stored ones
 }
 
 export interface PrometheusLabelParams extends PrometheusTimeRange {

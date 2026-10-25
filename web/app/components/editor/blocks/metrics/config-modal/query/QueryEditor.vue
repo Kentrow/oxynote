@@ -11,15 +11,16 @@ import {
 } from "@codemirror/autocomplete"
 import { type EditorView, keymap, tooltips } from "@codemirror/view"
 import { minimalSetup } from "codemirror"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import {
 	codemirrorTheme,
 	trimEditorWhitespace,
 	useQueryEditorExtension,
 } from "./editor"
-import type { TimeRangePreset } from "../../utils"
+import type { TimeRangePreset } from "~/utils/time-range"
 import { indentWithTab } from "@codemirror/commands"
 import { DiffStatus } from "~/components/editor/diff/position-map"
+import { useMetricVariables } from "../../variables"
 
 const props = defineProps<{
 	diffStatus?: DiffStatus | null
@@ -36,6 +37,7 @@ const { isDark } = useAppearance()
 const { isEditable } = useEditorMeta()
 const editorStore = useEditorStore()
 const { t } = useI18n({ useScope: "global" })
+const { variables } = useMetricVariables()
 
 const isEditingDisabled = computed(
 	() => !isEditable.value || editorStore.reviewableDiffActive,
@@ -45,6 +47,7 @@ const queryExtension = useQueryEditorExtension(
 	() => props.dataSourceId,
 	() => props.timeRange,
 	() => !isEditingDisabled.value,
+	variables,
 )
 
 const extensions = computed(() => {

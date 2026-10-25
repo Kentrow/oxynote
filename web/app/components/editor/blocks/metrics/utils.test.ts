@@ -3,19 +3,12 @@ import {
 	buildConfigFromNodeAttrs,
 	defaultMetricConfig,
 	MetricSimulationPreset,
-	RefreshInterval,
 	refreshIntervalToMs,
 	resolveTimeRange,
-	TimeRangePreset,
 	VisualizationDataUnit,
 	VisualizationTimeUnit,
 } from "./utils"
-
-// chartStyles resolves CSS variables through a canvas, which needs a real
-// DOM — the default threshold color is all defaultMetricConfig reads
-vi.mock("~/assets/css", () => ({
-	chartStyles: () => ({ selectableColors: { default: "#8a3ffc" } }),
-}))
+import { RefreshInterval, TimeRangePreset } from "~/utils/time-range"
 
 // a wednesday in the middle of a month, with sub-second precision so
 // boundary presets prove they snap to exact instants. Local-time
@@ -34,7 +27,7 @@ describe("defaultMetricConfig", () => {
 			timeRange: TimeRangePreset.Last5Minutes,
 			refreshInterval: RefreshInterval.M5,
 			thresholds: null,
-			baseThresholdColor: "#8a3ffc",
+			baseThresholdColor: "green",
 			decimals: null,
 			unit: { type: null, custom: null },
 			axisBounds: { min: null, max: null },

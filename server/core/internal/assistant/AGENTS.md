@@ -21,8 +21,8 @@ spelling (`prompt_test.go` and `tools_test.go` enforce both).
 ## Tools
 
 `tools/`, grouped by subject: `document.go`, `block.go`, `tag.go`,
-`hook.go`, `search.go`, `datasource.go`; `eino.go` holds the framework
-adapter and `read_tool_output`. `tools.Set` is the only list of tools;
+`variable.go`, `hook.go`, `search.go`, `datasource.go`; `eino.go` holds
+the framework adapter and `read_tool_output`. `tools.Set` is the only list of tools;
 adding one means its type plus a line there, and the MCP server picks it up
 for free.
 
@@ -32,10 +32,10 @@ for free.
   status line. Other surfaces use `Entry.Info` to describe and
   `Entry.Tool.Run` to run.
 - **Writes notify on `input`**: the method that changes the tree or a tag
-  announces it, so a tool never does. Hook writes go through
-  `HookManager`, which records history and announces the change, as for
-  the HTTP handler; `decodeHookSettings` switches on type into the
-  processor's own struct.
+  announces it, so a tool never does. Hook and variable writes go through
+  `HookManager` and `VariableManager`, which announce the change as for
+  the HTTP handler (hooks also record history); `decodeHookSettings`
+  switches on type into the processor's own struct.
 - **Content is markup** (`markup/`): `get_document` renders XML with ids,
   writes `markup.Build` it against the stored tree (a kept id keeps its
   uid, unchanged content keeps the stored node) and report from the build,
@@ -68,11 +68,13 @@ for free.
 - **`Info.Traits` says what a tool is**; the zero value is a plain read.
   `Write` gates behind confirmation and protects the result from context
   middlewares (only writes have a `Summary`; `Test_New` checks).
-  `Destructive` keeps it outside "approve all" (the four `delete_*`).
+  `Destructive` keeps it outside "approve all" (every `delete_*`).
   `Overwrites` means content the caller did not name is replaced
   (`replace_blocks`). `DataSource` reads an outbound
   connection (own MCP scope, open-world). `Internal` keeps it off other
-  surfaces (`read_tool_output`). The registry applies the confirmation gate
+  surfaces (`read_tool_output`). `Group` puts it behind `load_tools`
+  (`middleware.Loader`) in chat, when the model expands tool references
+  (Anthropic's own API). The registry applies the confirmation gate
   from traits; MCP serves the registry ungated and maps traits to scopes
   and annotations.
 

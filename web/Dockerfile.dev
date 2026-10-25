@@ -13,6 +13,7 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 # ordinary source edit cheap. Scripts are skipped here because the root
 # `prepare` runs `nuxt prepare`, which has no sources at this point.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY layers/ui/package.json ./layers/ui/
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
 COPY . .

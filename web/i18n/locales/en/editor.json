@@ -78,7 +78,13 @@
 				},
 				"review-workflow": {
 					"enable-title": "Make Reviewable",
-					"disable-title": "Make Non Reviewable"
+					"disable-title": "Make Non Reviewable",
+					"disable-confirm-modal": {
+						"title": "Make Non Reviewable",
+						"description": "This discards the draft version and all its changes. This action cannot be undone.",
+						"confirm-button": "Make non reviewable",
+						"cancel-button": "Cancel"
+					}
 				},
 				"delete": {
 					"title": "Delete"
@@ -310,12 +316,13 @@
 					"add-below-block": "Add Parameter Below"
 				},
 				"split-doc-right-side": {
-					"add-code-block-above-block": "Add Code Above",
-					"add-code-block-below-block": "Add Code Below",
-					"add-metrics-above-block": "Add Live Metrics Above",
-					"add-metrics-below-block": "Add Live Metrics Below",
-					"add-diagram-above-block": "Add Diagram Above",
-					"add-diagram-below-block": "Add Diagram Below"
+					"add-above-block": "Add Above",
+					"add-below-block": "Add Below",
+					"block-types": {
+						"code": "Code Block",
+						"metrics": "Live Metrics",
+						"diagram": "Mermaid Diagram"
+					}
 				},
 				"metric-block": {
 					"width": "Resize",
@@ -334,7 +341,8 @@
 			"page-or-url-placeholder": "https://example.com + Enter",
 			"open": "Open",
 			"edit": "Edit",
-			"delete": "Delete Link"
+			"delete": "Delete Link",
+			"previous": "Previous link"
 		},
 		"hooks": {
 			"title": "Freshness Hooks",
@@ -527,10 +535,11 @@
 		"split-documentation": {
 			"left-side-bottom-action-button": "Add Parameters",
 			"right-side-bottom-action-buttons": {
-				"add-code": "Add Code",
-				"add-metrics": "Add Metrics",
-				"add-diagram": "Add Diagram"
-			}
+				"code": "Code Block",
+				"metrics": "Live Metrics",
+				"diagram": "Mermaid Diagram"
+			},
+			"bottom-action-trigger-label": "Add Block"
 		},
 		"metrics": {
 			"labels": {
@@ -750,6 +759,7 @@
 						"range": "Duration of the selected time range",
 						"rate-interval": "Safe interval for rate() and increase(), adjusts to scrape frequency"
 					},
+					"variable": "Current value: {value}. You can change it in the variables sidebar.",
 					"sql": {
 						"from": "Start of the selected time range in unix milliseconds",
 						"to": "End of the selected time range in unix milliseconds",
@@ -823,63 +833,9 @@
 				"legend-format-placeholder": "{'{{'}some label{'}}'} {'{{'}another label{'}}'}",
 				"legend-format-empty-value-placeholder": "[empty]",
 				"time-range-label": "Time Range",
-				"time-range-placeholder": "Select time range",
-				"time-range-options": {
-					"last_5_minutes": "Last 5 minutes",
-					"last_15_minutes": "Last 15 minutes",
-					"last_30_minutes": "Last 30 minutes",
-					"last_1_hour": "Last 1 hour",
-					"last_3_hours": "Last 3 hours",
-					"last_6_hours": "Last 6 hours",
-					"last_12_hours": "Last 12 hours",
-					"last_24_hours": "Last 24 hours",
-					"last_2_days": "Last 2 days",
-					"last_7_days": "Last 7 days",
-					"last_30_days": "Last 30 days",
-					"last_90_days": "Last 90 days",
-					"last_6_months": "Last 6 months",
-					"last_1_year": "Last 1 year",
-					"last_2_years": "Last 2 years",
-					"last_5_years": "Last 5 years",
-					"today": "Today",
-					"yesterday": "Yesterday",
-					"today_so_far": "Today so far",
-					"this_week": "This week",
-					"this_week_so_far": "This week so far",
-					"this_month": "This month",
-					"this_month_so_far": "This month so far",
-					"this_year": "This year",
-					"this_year_so_far": "This year so far",
-					"previous_week": "Previous week",
-					"previous_month": "Previous month",
-					"previous_year": "Previous year"
-				},
 				"refresh-interval-label": "Refresh Interval",
-				"refresh-interval-placeholder": "Select refresh interval",
-				"refresh-interval-options": {
-					"5s": "5 seconds",
-					"10s": "10 seconds",
-					"30s": "30 seconds",
-					"1m": "1 minute",
-					"5m": "5 minutes",
-					"15m": "15 minutes",
-					"30m": "30 minutes",
-					"1h": "1 hour",
-					"2h": "2 hours",
-					"1d": "1 day"
-				},
-				"refresh-interval-options-short": {
-					"5s": "5s",
-					"10s": "10s",
-					"30s": "30s",
-					"1m": "1m",
-					"5m": "5m",
-					"15m": "15m",
-					"30m": "30m",
-					"1h": "1h",
-					"2h": "2h",
-					"1d": "1d"
-				}
+				"variable-time-range": "Global time",
+				"variable-refresh-interval": "Global refresh"
 			},
 			"diff": {
 				"visualization": "Visualization",

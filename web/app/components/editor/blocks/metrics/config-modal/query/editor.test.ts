@@ -7,11 +7,12 @@ import {
 	type CompletionSource,
 } from "@codemirror/autocomplete"
 import type { EditorView } from "codemirror"
-import { TimeRangePreset } from "../../utils"
+import { TimeRangePreset } from "~/utils/time-range"
 import {
 	installAutoImportGlobals,
 	stubPrometheusAPI,
 	stubSQLAPI,
+	variableTree,
 	type PrometheusStubData,
 	type SQLStubData,
 } from "./test-helpers"
@@ -87,6 +88,7 @@ function makeEditor(
 		() => options.dataSourceId ?? null,
 		() => TimeRangePreset.Last1Hour,
 		() => options.editingEnabled ?? true,
+		variableTree,
 	)
 
 	return { ...stubs, ...editor }
@@ -100,6 +102,7 @@ function makeLegendEditor(
 		() => "up",
 		() => options.dataSourceId ?? null,
 		() => TimeRangePreset.Last1Hour,
+		variableTree,
 	)
 
 	return { ...stubs, ...legend }
@@ -228,6 +231,7 @@ describe("useQueryEditorExtension", () => {
 		)
 
 		expect(labels).toContain("$__interval")
+		expect(labels).toContain("$env")
 	})
 
 	it("wires sql completions for a postgresql data source", async ({
@@ -241,11 +245,12 @@ describe("useQueryEditorExtension", () => {
 			EditorState,
 			CompletionContext,
 			extensions.value as Extension,
-			"$",
-			1,
+			"SELECT $",
+			8,
 		)
 
 		expect(labels).toContain("$__timeFilter(dateColumn)")
+		expect(labels).toContain("$env")
 	})
 
 	it.for([

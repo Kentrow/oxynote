@@ -29,7 +29,7 @@ import {
 	type LegendSelectChangedPayload,
 	type MultipleBarChartData,
 } from "."
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import type { VisualizationUnit } from "../utils"
 
 // Register ECharts modules

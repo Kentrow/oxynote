@@ -64,7 +64,7 @@ func Test_Options_ModelStatus(t *testing.T) {
 			Result: StatusActiveButWeak,
 		},
 		"Supported openrouter model": {
-			Opts:   Options{Provider: ProviderOpenRouter, Model: "anthropic/claude-opus-5", APIKey: "k"},
+			Opts:   Options{Provider: ProviderOpenRouter, Model: "anthropic/claude-opus-4.6", APIKey: "k"},
 			Result: StatusActive,
 		},
 	}
@@ -92,11 +92,11 @@ func Test_Provider_DefaultModel(t *testing.T) {
 		Provider Provider
 		Result   string
 	}{
-		"Claude":           {Provider: ProviderAnthropic, Result: "claude-opus-5"},
+		"Claude":           {Provider: ProviderAnthropic, Result: "claude-opus-5-5"},
 		"OpenAI":           {Provider: ProviderOpenAI, Result: "gpt-5.1"},
 		"Gemini":           {Provider: ProviderGoogle, Result: "gemini-2.5-pro"},
 		"Ollama":           {Provider: ProviderOllama, Result: "llama3.3:70b"},
-		"OpenRouter":       {Provider: ProviderOpenRouter, Result: "anthropic/claude-opus-5"},
+		"OpenRouter":       {Provider: ProviderOpenRouter, Result: "anthropic/claude-opus-5.5"},
 		"Unknown provider": {Provider: "cohere"},
 	}
 

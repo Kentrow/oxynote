@@ -3,10 +3,8 @@ package org
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"log/slog"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +22,8 @@ import (
 	"github.com/oxynote/oxynote/server/core/internal/server/internal/auth"
 	"github.com/oxynote/oxynote/server/core/internal/storage"
 	"github.com/oxynote/oxynote/server/core/internal/tag"
+	"github.com/oxynote/oxynote/server/core/internal/variable"
+	"github.com/oxynote/oxynote/server/core/pkg/sqlutil"
 	"github.com/oxynote/oxynote/server/core/pkg/testutil"
 	"github.com/rs/xid"
 	"github.com/stretchr/testify/assert"
@@ -35,50 +35,9 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, testutil.IgnoreBleveWorkers())
 }
 
-// addSession stores a test session on the request context.
-func addSession(ctx context.Context) context.Context {
-	return auth.AddSessionToContext(ctx, auth.Session{
-		UserID:               "u1",
-		ActiveOrganizationID: "org1",
-	})
-}
-
-// withTx wires the DB mock's BeginTx to hand out the provided Tx mock.
-func withTx(db *DBMock, tx *TxMock, err error) *DBMock {
-	db.BeginTxFunc = func(_ context.Context, dest any) error {
-		if err != nil {
-			return err
-		}
-
-		*dest.(*Tx) = tx
-
-		return nil
-	}
-
-	return db
-}
-
 // _testPNG is a data prefix carrying the PNG magic bytes so content
 // type sniffing detects image/png.
 var _testPNG = append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{1}, 1024)...)
-
-// multipartBody builds a multipart form body carrying a single file field.
-func multipartBody(t *testing.T, field string, content []byte) (io.Reader, string) {
-	t.Helper()
-
-	var buf bytes.Buffer
-
-	mw := multipart.NewWriter(&buf)
-
-	fw, err := mw.CreateFormFile(field, "logo.png")
-	require.NoError(t, err)
-
-	_, err = fw.Write(content)
-	require.NoError(t, err)
-	require.NoError(t, mw.Close())
-
-	return &buf, mw.FormDataContentType()
-}
 
 func Test_NewHandler(t *testing.T) {
 	t.Parallel()
@@ -89,7 +48,7 @@ func Test_NewHandler(t *testing.T) {
 	githubMan := &github.Manager{}
 	webchangeClient := &webchange.Client{}
 
-	searchTrigger := &SearchTriggerMock{}
+	searchQueue := &SearchQueueMock{}
 
 	hdl := NewHandler(
 		slog.New(slog.DiscardHandler),
@@ -97,7 +56,7 @@ func Test_NewHandler(t *testing.T) {
 		storer,
 		githubMan,
 		webchangeClient,
-		searchTrigger,
+		searchQueue,
 		"loc",
 	)
 	require.NotNil(t, hdl)
@@ -106,7 +65,7 @@ func Test_NewHandler(t *testing.T) {
 	assert.Same(t, storer, hdl.storer)
 	assert.Same(t, githubMan, hdl.githubMan)
 	assert.Same(t, webchangeClient, hdl.webchangeClient)
-	assert.Same(t, searchTrigger, hdl.searchTrigger)
+	assert.Same(t, searchQueue, hdl.searchQueue)
 	assert.Equal(t, "loc", hdl.publicURL)
 }
 
@@ -132,8 +91,8 @@ func assertSeededTags(t *testing.T, tx *TxMock, count int) {
 		assert.Equal(t, null.StringFrom("member1"), f.T.CreatedBy)
 	}
 
-	assert.Equal(t, []string{"Production", "Staging", "Incidents"}, names)
-	assert.Equal(t, []string{"#00a63e", "#f54a00", "#155dfc"}, colors)
+	assert.Equal(t, []string{"Production", "Staging", "Incidents"}[:count], names)
+	assert.Equal(t, []string{"green", "orange", "blue"}[:count], colors)
 }
 
 // assertWelcomeDocumentTagged checks that the welcome document's default
@@ -156,26 +115,57 @@ func assertWelcomeDocumentTagged(t *testing.T, tx *TxMock, count int) {
 	assert.Equal(t, tx.InsertTagCalls()[0].T.ID, ff[0].TagID)
 }
 
+// assertSeededVariables checks that the built-in variables went into the
+// transaction in order, each of the organization and its built-in group.
+func assertSeededVariables(t *testing.T, tx *TxMock, count int) {
+	t.Helper()
+
+	ff := tx.CreateVariableCalls()
+	require.Len(t, ff, count)
+
+	if count == 0 {
+		return
+	}
+
+	gg := tx.CreateVariableGroupCalls()
+	require.NotEmpty(t, gg)
+
+	keys := make([]string, 0, len(ff))
+
+	for _, f := range ff {
+		keys = append(keys, f.V.Key)
+		assert.Equal(t, gg[0].G.ID, f.V.GroupID)
+		assert.Equal(t, "org2", f.V.OrganizationID)
+	}
+
+	assert.Equal(t, []string{"metric_range", "metric_refresh"}[:count], keys)
+}
+
 func Test_Handler_InitializeOrganization(t *testing.T) {
-	type check func(*testing.T, *DBMock, *TxMock, *httptest.ResponseRecorder)
+	type check func(*testing.T, *DBMock, *TxMock, *SearchQueueMock, *httptest.ResponseRecorder)
 
 	checks := func(cc ...check) []check { return cc }
 
 	hasResp := func(code int, body string) check {
-		return func(t *testing.T, _ *DBMock, _ *TxMock, rec *httptest.ResponseRecorder) {
-			assert.Equal(t, code, rec.Code)
+		return func(t *testing.T, _ *DBMock, _ *TxMock, _ *SearchQueueMock, rec *httptest.ResponseRecorder) {
+			testutil.AssertResponse(t, rec, code, body)
+		}
+	}
 
-			if body == "" {
-				assert.Zero(t, rec.Body.Len(), rec.Body.String())
-				return
-			}
+	wasFetchMembersCalled := func(count int) check {
+		return func(t *testing.T, db *DBMock, _ *TxMock, _ *SearchQueueMock, _ *httptest.ResponseRecorder) {
+			assert.Len(t, db.FetchOrganizationMembersCalls(), count)
+		}
+	}
 
-			assert.JSONEq(t, body, rec.Body.String())
+	wasBeginTxCalled := func(count int) check {
+		return func(t *testing.T, db *DBMock, _ *TxMock, _ *SearchQueueMock, _ *httptest.ResponseRecorder) {
+			assert.Len(t, db.BeginTxCalls(), count)
 		}
 	}
 
 	wasInsertDataSourceCalled := func(count int) check {
-		return func(t *testing.T, db *DBMock, _ *TxMock, _ *httptest.ResponseRecorder) {
+		return func(t *testing.T, db *DBMock, _ *TxMock, _ *SearchQueueMock, _ *httptest.ResponseRecorder) {
 			ff := db.InsertDataSourceCalls()
 			require.Len(t, ff, count)
 
@@ -191,7 +181,7 @@ func Test_Handler_InitializeOrganization(t *testing.T) {
 	}
 
 	wasInsertDocumentCalled := func(count int) check {
-		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *httptest.ResponseRecorder) {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *httptest.ResponseRecorder) {
 			ff := tx.InsertDocumentCalls()
 			require.Len(t, ff, count)
 
@@ -206,7 +196,7 @@ func Test_Handler_InitializeOrganization(t *testing.T) {
 	}
 
 	wasUpsertMaintainersCalled := func(count int) check {
-		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *httptest.ResponseRecorder) {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *httptest.ResponseRecorder) {
 			ff := tx.UpsertDocumentMaintainersCalls()
 			require.Len(t, ff, count)
 
@@ -220,33 +210,67 @@ func Test_Handler_InitializeOrganization(t *testing.T) {
 	}
 
 	wasInsertTagCalled := func(count int) check {
-		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *httptest.ResponseRecorder) {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *httptest.ResponseRecorder) {
 			assertSeededTags(t, tx, count)
 		}
 	}
 
-	wasWelcomeDocumentTagged := func(count int) check {
-		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *httptest.ResponseRecorder) {
+	wasAssignBranchTagCalled := func(count int) check {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *httptest.ResponseRecorder) {
 			assertWelcomeDocumentTagged(t, tx, count)
 		}
 	}
 
-	wasSearchJobInserted := func(count int) check {
-		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *httptest.ResponseRecorder) {
-			assert.Len(t, tx.InsertSearchJobCalls(), count)
+	wasCreateVariableGroupCalled := func(count int) check {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *httptest.ResponseRecorder) {
+			ff := tx.CreateVariableGroupCalls()
+			require.Len(t, ff, count)
+
+			if count == 0 {
+				return
+			}
+
+			assert.Equal(t, "Metrics", ff[0].G.GroupName)
+			assert.Equal(t, "org2", ff[0].G.OrganizationID)
+			assert.True(t, ff[0].G.Builtin)
+		}
+	}
+
+	wasCreateVariableCalled := func(count int) check {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *httptest.ResponseRecorder) {
+			assertSeededVariables(t, tx, count)
+		}
+	}
+
+	wasEnqueueCalled := func(count int) check {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, queue *SearchQueueMock, _ *httptest.ResponseRecorder) {
+			ff := queue.EnqueueCalls()
+			require.Len(t, ff, count)
+
+			if count == 0 {
+				return
+			}
+
+			assert.Same(t, tx, ff[0].Tx)
 		}
 	}
 
 	wasCommitCalled := func(count int) check {
-		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *httptest.ResponseRecorder) {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *httptest.ResponseRecorder) {
 			assert.Len(t, tx.CommitCalls(), count)
-			assert.NotEmpty(t, tx.RollbackCalls())
+		}
+	}
+
+	wasRollbackCalled := func(count int) check {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *httptest.ResponseRecorder) {
+			assert.Len(t, tx.RollbackCalls(), count)
 		}
 	}
 
 	cc := map[string]struct {
 		DB         *DBMock
 		Tx         *TxMock
+		Queue      *SearchQueueMock
 		Members    []string
 		MembersErr error
 		BeginErr   error
@@ -258,57 +282,107 @@ func Test_Handler_InitializeOrganization(t *testing.T) {
 			OmitID: true,
 			Checks: checks(
 				hasResp(http.StatusNotFound, `{"code":"general","message":"not found"}`),
+				wasFetchMembersCalled(0),
 				wasInsertDataSourceCalled(0),
+				wasBeginTxCalled(0),
 				wasInsertDocumentCalled(0),
+				wasUpsertMaintainersCalled(0),
+				wasInsertTagCalled(0),
+				wasAssignBranchTagCalled(0),
+				wasCreateVariableGroupCalled(0),
+				wasCreateVariableCalled(0),
+				wasEnqueueCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(0),
 			),
 		},
-		"Transaction start error": {
+		"Error returned by DB.BeginTx": {
 			Tx:       &TxMock{},
 			Members:  []string{"member1"},
-			BeginErr: errors.New("boom"),
+			BeginErr: assert.AnError,
 			Checks: checks(
 				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchMembersCalled(1),
+				wasInsertDataSourceCalled(1),
+				wasBeginTxCalled(1),
 				wasInsertDocumentCalled(0),
+				wasUpsertMaintainersCalled(0),
+				wasInsertTagCalled(0),
+				wasAssignBranchTagCalled(0),
+				wasCreateVariableGroupCalled(0),
+				wasCreateVariableCalled(0),
+				wasEnqueueCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(0),
 			),
 		},
 		// both of these fail before anything is written, so no data source
 		// is created and no transaction is opened.
-		"Member fetch error": {
+		"Error returned by DB.FetchOrganizationMembers": {
 			Tx:         &TxMock{},
-			MembersErr: errors.New("boom"),
+			MembersErr: assert.AnError,
 			Checks: checks(
 				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchMembersCalled(1),
 				wasInsertDataSourceCalled(0),
+				wasBeginTxCalled(0),
 				wasInsertDocumentCalled(0),
+				wasUpsertMaintainersCalled(0),
+				wasInsertTagCalled(0),
+				wasAssignBranchTagCalled(0),
+				wasCreateVariableGroupCalled(0),
+				wasCreateVariableCalled(0),
+				wasEnqueueCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(0),
 			),
 		},
 		"No organization members": {
 			Tx: &TxMock{},
 			Checks: checks(
 				hasResp(http.StatusBadRequest, `{"code":"organization.no_members","message":"organization has no members"}`),
+				wasFetchMembersCalled(1),
 				wasInsertDataSourceCalled(0),
+				wasBeginTxCalled(0),
 				wasInsertDocumentCalled(0),
+				wasUpsertMaintainersCalled(0),
+				wasInsertTagCalled(0),
+				wasAssignBranchTagCalled(0),
+				wasCreateVariableGroupCalled(0),
+				wasCreateVariableCalled(0),
+				wasEnqueueCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(0),
 			),
 		},
-		"Data source insertion error is tolerated": {
+		"Error returned by DB.InsertDataSource is tolerated": {
 			Members: []string{"member1"},
 			DB: &DBMock{
 				InsertDataSourceFunc: func(context.Context, *datasource.DataSource) error {
-					return errors.New("boom")
+					return assert.AnError
 				},
 			},
 			Tx: &TxMock{},
 			Checks: checks(
-				func(t *testing.T, _ *DBMock, _ *TxMock, rec *httptest.ResponseRecorder) {
+				func(t *testing.T, _ *DBMock, _ *TxMock, _ *SearchQueueMock, rec *httptest.ResponseRecorder) {
 					assert.Equal(t, http.StatusCreated, rec.Code)
 				},
+				wasFetchMembersCalled(1),
 				wasInsertDataSourceCalled(1),
+				wasBeginTxCalled(1),
 				wasInsertDocumentCalled(1),
+				wasUpsertMaintainersCalled(1),
+				wasInsertTagCalled(3),
+				wasAssignBranchTagCalled(1),
+				wasCreateVariableGroupCalled(1),
+				wasCreateVariableCalled(2),
+				wasEnqueueCalled(1),
 				wasCommitCalled(1),
+				wasRollbackCalled(1),
 				// the charts have no data source to read, so the welcome
 				// document ships without them rather than with a dangling
 				// reference.
-				func(t *testing.T, _ *DBMock, tx *TxMock, _ *httptest.ResponseRecorder) {
+				func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *httptest.ResponseRecorder) {
 					ff := tx.InsertDocumentCalls()
 					require.NotEmpty(t, ff)
 
@@ -318,103 +392,211 @@ func Test_Handler_InitializeOrganization(t *testing.T) {
 				},
 			),
 		},
-		"Document insertion error": {
+		"Error returned by Tx.InsertDocument": {
 			Members: []string{"member1"},
 			Tx: &TxMock{
 				InsertDocumentFunc: func(context.Context, document.Document) error {
-					return errors.New("boom")
+					return assert.AnError
 				},
 			},
 			Checks: checks(
 				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchMembersCalled(1),
+				wasInsertDataSourceCalled(1),
+				wasBeginTxCalled(1),
 				wasInsertDocumentCalled(1),
+				wasUpsertMaintainersCalled(0),
+				wasInsertTagCalled(0),
+				wasAssignBranchTagCalled(0),
+				wasCreateVariableGroupCalled(0),
+				wasCreateVariableCalled(0),
+				wasEnqueueCalled(0),
 				wasCommitCalled(0),
+				wasRollbackCalled(1),
 			),
 		},
-		"Maintainer upsert error": {
+		"Error returned by Tx.UpsertDocumentMaintainers": {
 			Members: []string{"member1"},
 			Tx: &TxMock{
 				UpsertDocumentMaintainersFunc: func(context.Context, xid.ID, string, []string) error {
-					return errors.New("boom")
+					return assert.AnError
 				},
 			},
 			Checks: checks(
 				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchMembersCalled(1),
+				wasInsertDataSourceCalled(1),
+				wasBeginTxCalled(1),
+				wasInsertDocumentCalled(1),
 				wasUpsertMaintainersCalled(1),
+				wasInsertTagCalled(0),
+				wasAssignBranchTagCalled(0),
+				wasCreateVariableGroupCalled(0),
+				wasCreateVariableCalled(0),
+				wasEnqueueCalled(0),
 				wasCommitCalled(0),
+				wasRollbackCalled(1),
 			),
 		},
-		"Tag insertion error": {
+		"Error returned by Tx.InsertTag": {
 			Members: []string{"member1"},
 			Tx: &TxMock{
 				InsertTagFunc: func(context.Context, tag.Tag) error {
-					return errors.New("boom")
+					return assert.AnError
 				},
 			},
 			Checks: checks(
 				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
-				wasWelcomeDocumentTagged(0),
+				wasFetchMembersCalled(1),
+				wasInsertDataSourceCalled(1),
+				wasBeginTxCalled(1),
+				wasInsertDocumentCalled(1),
+				wasUpsertMaintainersCalled(1),
+				wasInsertTagCalled(1),
+				wasAssignBranchTagCalled(0),
+				wasCreateVariableGroupCalled(0),
+				wasCreateVariableCalled(0),
+				wasEnqueueCalled(0),
 				wasCommitCalled(0),
+				wasRollbackCalled(1),
 			),
 		},
-		"Tag assignment error": {
+		"Error returned by Tx.AssignBranchTag": {
 			Members: []string{"member1"},
 			Tx: &TxMock{
 				AssignBranchTagFunc: func(context.Context, string, xid.ID, xid.ID, xid.ID) error {
-					return errors.New("boom")
+					return assert.AnError
 				},
 			},
 			Checks: checks(
 				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
-				wasInsertTagCalled(3),
-				wasWelcomeDocumentTagged(1),
-				wasCommitCalled(0),
-			),
-		},
-		"Search job insertion error": {
-			Members: []string{"member1"},
-			Tx: &TxMock{
-				InsertSearchJobFunc: func(context.Context, search.Job) error {
-					return errors.New("boom")
-				},
-			},
-			Checks: checks(
-				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
-				wasSearchJobInserted(1),
-				wasCommitCalled(0),
-			),
-		},
-		"Commit error": {
-			Members: []string{"member1"},
-			Tx: &TxMock{
-				CommitFunc: func() error {
-					return errors.New("boom")
-				},
-			},
-			Checks: checks(
-				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
-				wasCommitCalled(1),
-			),
-		},
-		"Successful initialization": {
-			Members: []string{"member1"},
-			Tx: &TxMock{
-				FetchOrganizationMembersFunc: func(context.Context, string) ([]string, error) {
-					return []string{"member1", "member2"}, nil
-				},
-			},
-			Checks: checks(
-				func(t *testing.T, _ *DBMock, _ *TxMock, rec *httptest.ResponseRecorder) {
-					assert.Equal(t, http.StatusCreated, rec.Code)
-					assert.Contains(t, rec.Body.String(), "Welcome to Oxynote!")
-				},
+				wasFetchMembersCalled(1),
 				wasInsertDataSourceCalled(1),
+				wasBeginTxCalled(1),
 				wasInsertDocumentCalled(1),
 				wasUpsertMaintainersCalled(1),
 				wasInsertTagCalled(3),
-				wasWelcomeDocumentTagged(1),
-				wasSearchJobInserted(1),
+				wasAssignBranchTagCalled(1),
+				wasCreateVariableGroupCalled(0),
+				wasCreateVariableCalled(0),
+				wasEnqueueCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(1),
+			),
+		},
+		"Error returned by Tx.CreateVariableGroup": {
+			Members: []string{"member1"},
+			Tx: &TxMock{
+				CreateVariableGroupFunc: func(context.Context, variable.Group) error {
+					return assert.AnError
+				},
+			},
+			Checks: checks(
+				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchMembersCalled(1),
+				wasInsertDataSourceCalled(1),
+				wasBeginTxCalled(1),
+				wasInsertDocumentCalled(1),
+				wasUpsertMaintainersCalled(1),
+				wasInsertTagCalled(3),
+				wasAssignBranchTagCalled(1),
+				wasCreateVariableGroupCalled(1),
+				wasCreateVariableCalled(0),
+				wasEnqueueCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(1),
+			),
+		},
+		"Error returned by Tx.CreateVariable": {
+			Members: []string{"member1"},
+			Tx: &TxMock{
+				CreateVariableFunc: func(context.Context, variable.Variable) error {
+					return assert.AnError
+				},
+			},
+			Checks: checks(
+				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchMembersCalled(1),
+				wasInsertDataSourceCalled(1),
+				wasBeginTxCalled(1),
+				wasInsertDocumentCalled(1),
+				wasUpsertMaintainersCalled(1),
+				wasInsertTagCalled(3),
+				wasAssignBranchTagCalled(1),
+				wasCreateVariableGroupCalled(1),
+				wasCreateVariableCalled(1),
+				wasEnqueueCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(1),
+			),
+		},
+		"Error returned by SearchQueue.Enqueue": {
+			Members: []string{"member1"},
+			Tx:      &TxMock{},
+			Queue: &SearchQueueMock{
+				EnqueueFunc: func(context.Context, sqlutil.Tx, search.Job) error {
+					return assert.AnError
+				},
+			},
+			Checks: checks(
+				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchMembersCalled(1),
+				wasInsertDataSourceCalled(1),
+				wasBeginTxCalled(1),
+				wasInsertDocumentCalled(1),
+				wasUpsertMaintainersCalled(1),
+				wasInsertTagCalled(3),
+				wasAssignBranchTagCalled(1),
+				wasCreateVariableGroupCalled(1),
+				wasCreateVariableCalled(2),
+				wasEnqueueCalled(1),
+				wasCommitCalled(0),
+				wasRollbackCalled(1),
+			),
+		},
+		"Error returned by Tx.Commit": {
+			Members: []string{"member1"},
+			Tx: &TxMock{
+				CommitFunc: func() error {
+					return assert.AnError
+				},
+			},
+			Checks: checks(
+				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchMembersCalled(1),
+				wasInsertDataSourceCalled(1),
+				wasBeginTxCalled(1),
+				wasInsertDocumentCalled(1),
+				wasUpsertMaintainersCalled(1),
+				wasInsertTagCalled(3),
+				wasAssignBranchTagCalled(1),
+				wasCreateVariableGroupCalled(1),
+				wasCreateVariableCalled(2),
+				wasEnqueueCalled(1),
 				wasCommitCalled(1),
+				wasRollbackCalled(1),
+			),
+		},
+		"Successful initialization": {
+			Members: []string{"member1", "member2"},
+			Tx:      &TxMock{},
+			Checks: checks(
+				func(t *testing.T, _ *DBMock, _ *TxMock, _ *SearchQueueMock, rec *httptest.ResponseRecorder) {
+					assert.Equal(t, http.StatusCreated, rec.Code)
+					assert.Contains(t, rec.Body.String(), "Welcome to Oxynote!")
+				},
+				wasFetchMembersCalled(1),
+				wasInsertDataSourceCalled(1),
+				wasBeginTxCalled(1),
+				wasInsertDocumentCalled(1),
+				wasUpsertMaintainersCalled(1),
+				wasInsertTagCalled(3),
+				wasAssignBranchTagCalled(1),
+				wasCreateVariableGroupCalled(1),
+				wasCreateVariableCalled(2),
+				wasEnqueueCalled(1),
+				wasCommitCalled(1),
+				wasRollbackCalled(1),
 			),
 		},
 	}
@@ -431,12 +613,18 @@ func Test_Handler_InitializeOrganization(t *testing.T) {
 			db.FetchOrganizationMembersFunc = func(context.Context, string) ([]string, error) {
 				return c.Members, c.MembersErr
 			}
+			db.BeginTxFunc = testutil.StubBeginTx(c.Tx, c.BeginErr)
+
+			queue := c.Queue
+			if queue == nil {
+				queue = &SearchQueueMock{}
+			}
 
 			hdl := Handler{
-				log:           slog.New(slog.DiscardHandler),
-				db:            withTx(db, c.Tx, c.BeginErr),
-				searchTrigger: &SearchTriggerMock{},
-				publicURL:     "loc",
+				log:         slog.New(slog.DiscardHandler),
+				db:          db,
+				searchQueue: queue,
+				publicURL:   "loc",
 			}
 
 			req := httptest.NewRequest(http.MethodPost, "http://test.com/", http.NoBody)
@@ -452,7 +640,7 @@ func Test_Handler_InitializeOrganization(t *testing.T) {
 			hdl.InitializeOrganization(rec, req.WithContext(ctx))
 
 			for _, ch := range c.Checks {
-				ch(t, db, c.Tx, rec)
+				ch(t, db, c.Tx, queue, rec)
 			}
 		})
 	}
@@ -465,14 +653,7 @@ func Test_Handler_UploadOrganizationLogo(t *testing.T) {
 
 	hasResp := func(code int, body string) check {
 		return func(t *testing.T, _ *DBMock, _ *StorerMock, rec *httptest.ResponseRecorder) {
-			assert.Equal(t, code, rec.Code)
-
-			if body == "" {
-				assert.Zero(t, rec.Body.Len(), rec.Body.String())
-				return
-			}
-
-			assert.JSONEq(t, body, rec.Body.String())
+			testutil.AssertResponse(t, rec, code, body)
 		}
 	}
 
@@ -528,6 +709,8 @@ func Test_Handler_UploadOrganizationLogo(t *testing.T) {
 			Checks: checks(
 				hasResp(http.StatusUnauthorized, `{"code":"account.not_authenticated","message":"not authenticated"}`),
 				wasUploadCalled(0),
+				wasUpdateLogoCalled(0),
+				wasDeleteCalled(0),
 			),
 		},
 		"Missing multipart logo field": {
@@ -537,6 +720,8 @@ func Test_Handler_UploadOrganizationLogo(t *testing.T) {
 			Checks: checks(
 				hasResp(http.StatusBadRequest, `{"code":"request.invalid_form","message":"invalid form data"}`),
 				wasUploadCalled(0),
+				wasUpdateLogoCalled(0),
+				wasDeleteCalled(0),
 			),
 		},
 		"Error returned by storage.ReadObject": {
@@ -547,25 +732,27 @@ func Test_Handler_UploadOrganizationLogo(t *testing.T) {
 				hasResp(http.StatusBadRequest, `{"code":"storage.invalid_content_type","message":"invalid content type"}`),
 				wasUploadCalled(0),
 				wasUpdateLogoCalled(0),
+				wasDeleteCalled(0),
 			),
 		},
-		"Storer upload error": {
+		"Error returned by Storer.Upload": {
 			DB: &DBMock{},
 			Storer: &StorerMock{
 				UploadFunc: func(context.Context, string, string, []byte, string) error {
-					return errors.New("boom")
+					return assert.AnError
 				},
 			},
 			Checks: checks(
 				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
 				wasUploadCalled(1),
 				wasUpdateLogoCalled(0),
+				wasDeleteCalled(0),
 			),
 		},
-		"DB update error triggers cleanup": {
+		"Error returned by DB.UpdateOrganizationLogo": {
 			DB: &DBMock{
 				UpdateOrganizationLogoFunc: func(context.Context, string, string) error {
-					return errors.New("boom")
+					return assert.AnError
 				},
 			},
 			Storer: &StorerMock{},
@@ -576,19 +763,21 @@ func Test_Handler_UploadOrganizationLogo(t *testing.T) {
 				wasDeleteCalled(1),
 			),
 		},
-		"DB update error with failing cleanup": {
+		"Error returned by Storer.Delete after DB.UpdateOrganizationLogo": {
 			DB: &DBMock{
 				UpdateOrganizationLogoFunc: func(context.Context, string, string) error {
-					return errors.New("boom")
+					return assert.AnError
 				},
 			},
 			Storer: &StorerMock{
 				DeleteFunc: func(context.Context, string, string) error {
-					return errors.New("cleanup boom")
+					return assert.AnError
 				},
 			},
 			Checks: checks(
 				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasUploadCalled(1),
+				wasUpdateLogoCalled(1),
 				wasDeleteCalled(1),
 			),
 		},
@@ -630,7 +819,7 @@ func Test_Handler_UploadOrganizationLogo(t *testing.T) {
 					content = _testPNG
 				}
 
-				body, contentType = multipartBody(t, "logo", content)
+				body, contentType = testutil.MultipartBody(t, "logo", "logo.png", content)
 			}
 
 			req := httptest.NewRequest(http.MethodPut, "http://test.com/", body)
@@ -640,7 +829,10 @@ func Test_Handler_UploadOrganizationLogo(t *testing.T) {
 			}
 
 			if !c.NoSession {
-				req = req.WithContext(addSession(req.Context()))
+				req = req.WithContext(auth.AddSessionToContext(req.Context(), auth.Session{
+					UserID:               "u1",
+					ActiveOrganizationID: "org1",
+				}))
 			}
 
 			rec := httptest.NewRecorder()
@@ -769,6 +961,8 @@ func Test_Handler_storeLogo(t *testing.T) {
 			Err: assert.AnError,
 			Checks: checks(
 				hasLog("deleting object after DB failure"),
+				wasUploadCalled(1),
+				wasUpdateLogoCalled(1),
 				wasDeleteCalled(1),
 			),
 		},
@@ -844,10 +1038,10 @@ func Test_Handler_RetrieveOrganizationLogo(t *testing.T) {
 				wasRetrieveCalled(0),
 			),
 		},
-		"Storer retrieval error": {
+		"Error returned by Storer.Retrieve": {
 			Storer: &StorerMock{
 				RetrieveFunc: func(context.Context, string, string) (*storage.ObjectInfo, bool, error) {
-					return nil, false, errors.New("boom")
+					return nil, false, assert.AnError
 				},
 			},
 			Checks: checks(
@@ -922,7 +1116,10 @@ func Test_Handler_RetrieveOrganizationLogo(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "http://test.com/", http.NoBody)
 
 			if !c.NoSession {
-				req = req.WithContext(addSession(req.Context()))
+				req = req.WithContext(auth.AddSessionToContext(req.Context(), auth.Session{
+					UserID:               "u1",
+					ActiveOrganizationID: "org1",
+				}))
 			}
 
 			if c.NoneMatch != "" {
@@ -940,47 +1137,52 @@ func Test_Handler_RetrieveOrganizationLogo(t *testing.T) {
 	}
 }
 
-// teardownHook builds a stored hook whose processor needs no external
-// dependencies.
-func teardownHook(typ hook.Type) hook.Hook {
-	return hook.Hook{
-		ID:             xid.New(),
-		Type:           typ,
-		DocumentID:     null.ValueFrom(xid.New()),
-		OrganizationID: null.StringFrom("org2"),
-		BranchID:       null.ValueFrom(xid.New()),
-		Settings:       processor.Settings(`{"scale":"linear"}`),
-		State:          null.ValueFrom(processor.State(`{}`)),
-		Status:         processor.StatusActive,
-	}
-}
-
 func Test_Handler_TeardownOrganization(t *testing.T) {
-	type check func(*testing.T, *DBMock, *TxMock, *StorerMock, *httptest.ResponseRecorder)
+	type check func(*testing.T, *DBMock, *TxMock, *SearchQueueMock, *StorerMock, *httptest.ResponseRecorder)
 
 	checks := func(cc ...check) []check { return cc }
 
-	hasResp := func(code int) check {
-		return func(t *testing.T, _ *DBMock, _ *TxMock, _ *StorerMock, rec *httptest.ResponseRecorder) {
-			assert.Equal(t, code, rec.Code)
+	hasResp := func(code int, body string) check {
+		return func(t *testing.T, _ *DBMock, _ *TxMock, _ *SearchQueueMock, _ *StorerMock, rec *httptest.ResponseRecorder) {
+			testutil.AssertResponse(t, rec, code, body)
 		}
 	}
 
-	wasSearchJobInserted := func(count int) check {
-		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *StorerMock, _ *httptest.ResponseRecorder) {
-			ff := tx.InsertSearchJobCalls()
+	wasFetchHooksCalled := func(count int) check {
+		return func(t *testing.T, db *DBMock, _ *TxMock, _ *SearchQueueMock, _ *StorerMock, _ *httptest.ResponseRecorder) {
+			ff := db.FetchDocumentHooksByOrganizationIDCalls()
 			require.Len(t, ff, count)
 
 			if count == 0 {
 				return
 			}
 
-			assert.Equal(t, search.OrganizationScope("org2"), ff[0].Job)
+			assert.Equal(t, "org2", ff[0].OrganizationID)
 		}
 	}
 
-	wasSlackDeleted := func(count int) check {
-		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *StorerMock, _ *httptest.ResponseRecorder) {
+	wasBeginTxCalled := func(count int) check {
+		return func(t *testing.T, db *DBMock, _ *TxMock, _ *SearchQueueMock, _ *StorerMock, _ *httptest.ResponseRecorder) {
+			assert.Len(t, db.BeginTxCalls(), count)
+		}
+	}
+
+	wasEnqueueCalled := func(count int) check {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, queue *SearchQueueMock, _ *StorerMock, _ *httptest.ResponseRecorder) {
+			ff := queue.EnqueueCalls()
+			require.Len(t, ff, count)
+
+			if count == 0 {
+				return
+			}
+
+			assert.Same(t, tx, ff[0].Tx)
+			assert.Equal(t, search.OrganizationScope("org2"), ff[0].J)
+		}
+	}
+
+	wasDeleteSlackAppsCalled := func(count int) check {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *StorerMock, _ *httptest.ResponseRecorder) {
 			ff := tx.DeleteSlackAppsByOrganizationIDCalls()
 			require.Len(t, ff, count)
 
@@ -992,8 +1194,8 @@ func Test_Handler_TeardownOrganization(t *testing.T) {
 		}
 	}
 
-	wasGithubDeleted := func(count int) check {
-		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *StorerMock, _ *httptest.ResponseRecorder) {
+	wasDeleteGithubInstallationsCalled := func(count int) check {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *StorerMock, _ *httptest.ResponseRecorder) {
 			ff := tx.DeleteGithubInstallationsByOrganizationIDCalls()
 			require.Len(t, ff, count)
 
@@ -1005,8 +1207,8 @@ func Test_Handler_TeardownOrganization(t *testing.T) {
 		}
 	}
 
-	wasLogoDeleted := func(count int) check {
-		return func(t *testing.T, _ *DBMock, _ *TxMock, storer *StorerMock, _ *httptest.ResponseRecorder) {
+	wasDeleteCalled := func(count int) check {
+		return func(t *testing.T, _ *DBMock, _ *TxMock, _ *SearchQueueMock, storer *StorerMock, _ *httptest.ResponseRecorder) {
 			ff := storer.DeleteCalls()
 			require.Len(t, ff, count)
 
@@ -1019,23 +1221,22 @@ func Test_Handler_TeardownOrganization(t *testing.T) {
 		}
 	}
 
-	wasCommitted := func(count int) check {
-		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *StorerMock, _ *httptest.ResponseRecorder) {
-			require.Len(t, tx.CommitCalls(), count)
+	wasCommitCalled := func(count int) check {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *StorerMock, _ *httptest.ResponseRecorder) {
+			assert.Len(t, tx.CommitCalls(), count)
 		}
 	}
 
-	hooksFound := func(hooks ...hook.Hook) *DBMock {
-		return &DBMock{
-			FetchDocumentHooksByOrganizationIDFunc: func(context.Context, string) ([]hook.Hook, error) {
-				return hooks, nil
-			},
+	wasRollbackCalled := func(count int) check {
+		return func(t *testing.T, _ *DBMock, tx *TxMock, _ *SearchQueueMock, _ *StorerMock, _ *httptest.ResponseRecorder) {
+			assert.Len(t, tx.RollbackCalls(), count)
 		}
 	}
 
 	cc := map[string]struct {
 		DB       *DBMock
 		Tx       *TxMock
+		Queue    *SearchQueueMock
 		Storer   *StorerMock
 		BeginErr error
 		OmitID   bool
@@ -1046,117 +1247,205 @@ func Test_Handler_TeardownOrganization(t *testing.T) {
 			Tx:     &TxMock{},
 			OmitID: true,
 			Checks: checks(
-				hasResp(http.StatusNotFound),
-				wasSearchJobInserted(0),
+				hasResp(http.StatusNotFound, `{"code":"general","message":"not found"}`),
+				wasFetchHooksCalled(0),
+				wasBeginTxCalled(0),
+				wasEnqueueCalled(0),
+				wasDeleteSlackAppsCalled(0),
+				wasDeleteGithubInstallationsCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(0),
+				wasDeleteCalled(0),
 			),
 		},
-		"Hook fetch error": {
+		"Error returned by DB.FetchDocumentHooksByOrganizationID": {
 			DB: &DBMock{
 				FetchDocumentHooksByOrganizationIDFunc: func(context.Context, string) ([]hook.Hook, error) {
-					return nil, errors.New("boom")
+					return nil, assert.AnError
 				},
 			},
 			Tx: &TxMock{},
 			Checks: checks(
-				hasResp(http.StatusInternalServerError),
-				wasSearchJobInserted(0),
+				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchHooksCalled(1),
+				wasBeginTxCalled(0),
+				wasEnqueueCalled(0),
+				wasDeleteSlackAppsCalled(0),
+				wasDeleteGithubInstallationsCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(0),
+				wasDeleteCalled(0),
 			),
 		},
 		// the teardown is refused rather than letting the organization go
 		// away with a watcher nothing can reach any more.
-		"Hook cleanup error": {
-			DB: hooksFound(teardownHook("bogus")),
+		"Error returned by Hook.Delete": {
+			DB: &DBMock{
+				FetchDocumentHooksByOrganizationIDFunc: func(context.Context, string) ([]hook.Hook, error) {
+					return []hook.Hook{{
+						ID:             xid.New(),
+						Type:           "bogus",
+						DocumentID:     null.ValueFrom(xid.New()),
+						OrganizationID: null.StringFrom("org2"),
+						BranchID:       null.ValueFrom(xid.New()),
+						Settings:       processor.Settings(`{"scale":"linear"}`),
+						State:          null.ValueFrom(processor.State(`{}`)),
+						Status:         processor.StatusActive,
+					}}, nil
+				},
+			},
 			Tx: &TxMock{},
 			Checks: checks(
-				hasResp(http.StatusInternalServerError),
-				wasSearchJobInserted(0),
-				wasCommitted(0),
+				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchHooksCalled(1),
+				wasBeginTxCalled(0),
+				wasEnqueueCalled(0),
+				wasDeleteSlackAppsCalled(0),
+				wasDeleteGithubInstallationsCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(0),
+				wasDeleteCalled(0),
 			),
 		},
-		"Transaction start error": {
+		"Error returned by DB.BeginTx": {
 			DB:       &DBMock{},
 			Tx:       &TxMock{},
-			BeginErr: errors.New("boom"),
+			BeginErr: assert.AnError,
 			Checks: checks(
-				hasResp(http.StatusInternalServerError),
-				wasSearchJobInserted(0),
+				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchHooksCalled(1),
+				wasBeginTxCalled(1),
+				wasEnqueueCalled(0),
+				wasDeleteSlackAppsCalled(0),
+				wasDeleteGithubInstallationsCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(0),
+				wasDeleteCalled(0),
 			),
 		},
-		"Search job insertion error": {
+		"Error returned by SearchQueue.Enqueue": {
 			DB: &DBMock{},
-			Tx: &TxMock{
-				InsertSearchJobFunc: func(context.Context, search.Job) error {
-					return errors.New("boom")
+			Tx: &TxMock{},
+			Queue: &SearchQueueMock{
+				EnqueueFunc: func(context.Context, sqlutil.Tx, search.Job) error {
+					return assert.AnError
 				},
 			},
 			Checks: checks(
-				hasResp(http.StatusInternalServerError),
-				wasSlackDeleted(0),
-				wasCommitted(0),
+				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchHooksCalled(1),
+				wasBeginTxCalled(1),
+				wasEnqueueCalled(1),
+				wasDeleteSlackAppsCalled(0),
+				wasDeleteGithubInstallationsCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(1),
+				wasDeleteCalled(0),
 			),
 		},
-		"Slack app deletion error": {
+		"Error returned by Tx.DeleteSlackAppsByOrganizationID": {
 			DB: &DBMock{},
 			Tx: &TxMock{
 				DeleteSlackAppsByOrganizationIDFunc: func(context.Context, string) error {
-					return errors.New("boom")
+					return assert.AnError
 				},
 			},
 			Checks: checks(
-				hasResp(http.StatusInternalServerError),
-				wasGithubDeleted(0),
-				wasCommitted(0),
+				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchHooksCalled(1),
+				wasBeginTxCalled(1),
+				wasEnqueueCalled(1),
+				wasDeleteSlackAppsCalled(1),
+				wasDeleteGithubInstallationsCalled(0),
+				wasCommitCalled(0),
+				wasRollbackCalled(1),
+				wasDeleteCalled(0),
 			),
 		},
-		"Github installation deletion error": {
+		"Error returned by Tx.DeleteGithubInstallationsByOrganizationID": {
 			DB: &DBMock{},
 			Tx: &TxMock{
 				DeleteGithubInstallationsByOrganizationIDFunc: func(context.Context, string) error {
-					return errors.New("boom")
+					return assert.AnError
 				},
 			},
 			Checks: checks(
-				hasResp(http.StatusInternalServerError),
-				wasCommitted(0),
+				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchHooksCalled(1),
+				wasBeginTxCalled(1),
+				wasEnqueueCalled(1),
+				wasDeleteSlackAppsCalled(1),
+				wasDeleteGithubInstallationsCalled(1),
+				wasCommitCalled(0),
+				wasRollbackCalled(1),
+				wasDeleteCalled(0),
 			),
 		},
-		"Commit error": {
+		"Error returned by Tx.Commit": {
 			DB: &DBMock{},
 			Tx: &TxMock{
 				CommitFunc: func() error {
-					return errors.New("boom")
+					return assert.AnError
 				},
 			},
 			Checks: checks(
-				hasResp(http.StatusInternalServerError),
-				wasCommitted(1),
-				wasLogoDeleted(0),
+				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchHooksCalled(1),
+				wasBeginTxCalled(1),
+				wasEnqueueCalled(1),
+				wasDeleteSlackAppsCalled(1),
+				wasDeleteGithubInstallationsCalled(1),
+				wasCommitCalled(1),
+				wasRollbackCalled(1),
+				wasDeleteCalled(0),
 			),
 		},
-		"Logo deletion error": {
+		"Error returned by Storer.Delete": {
 			DB: &DBMock{},
 			Tx: &TxMock{},
 			Storer: &StorerMock{
 				DeleteFunc: func(context.Context, string, string) error {
-					return errors.New("boom")
+					return assert.AnError
 				},
 			},
 			Checks: checks(
-				hasResp(http.StatusInternalServerError),
-				wasCommitted(1),
-				wasLogoDeleted(1),
+				hasResp(http.StatusInternalServerError, `{"code":"general","message":"internal server error"}`),
+				wasFetchHooksCalled(1),
+				wasBeginTxCalled(1),
+				wasEnqueueCalled(1),
+				wasDeleteSlackAppsCalled(1),
+				wasDeleteGithubInstallationsCalled(1),
+				wasCommitCalled(1),
+				wasRollbackCalled(1),
+				wasDeleteCalled(1),
 			),
 		},
 		"Successful teardown": {
-			DB: hooksFound(teardownHook(hook.TypeScheduledReminder)),
+			DB: &DBMock{
+				FetchDocumentHooksByOrganizationIDFunc: func(context.Context, string) ([]hook.Hook, error) {
+					return []hook.Hook{{
+						ID:             xid.New(),
+						Type:           hook.TypeScheduledReminder,
+						DocumentID:     null.ValueFrom(xid.New()),
+						OrganizationID: null.StringFrom("org2"),
+						BranchID:       null.ValueFrom(xid.New()),
+						Settings:       processor.Settings(`{"scale":"linear"}`),
+						State:          null.ValueFrom(processor.State(`{}`)),
+						Status:         processor.StatusActive,
+					}}, nil
+				},
+			},
 			Tx: &TxMock{},
 			Checks: checks(
-				hasResp(http.StatusNoContent),
-				wasSearchJobInserted(1),
-				wasSlackDeleted(1),
-				wasGithubDeleted(1),
-				wasCommitted(1),
-				wasLogoDeleted(1),
+				hasResp(http.StatusNoContent, ""),
+				wasFetchHooksCalled(1),
+				wasBeginTxCalled(1),
+				wasEnqueueCalled(1),
+				wasDeleteSlackAppsCalled(1),
+				wasDeleteGithubInstallationsCalled(1),
+				wasCommitCalled(1),
+				wasRollbackCalled(1),
+				wasDeleteCalled(1),
 			),
 		},
 	}
@@ -1170,11 +1459,18 @@ func Test_Handler_TeardownOrganization(t *testing.T) {
 				storer = &StorerMock{}
 			}
 
+			queue := c.Queue
+			if queue == nil {
+				queue = &SearchQueueMock{}
+			}
+
+			c.DB.BeginTxFunc = testutil.StubBeginTx(c.Tx, c.BeginErr)
+
 			hdl := Handler{
-				log:           slog.New(slog.DiscardHandler),
-				db:            withTx(c.DB, c.Tx, c.BeginErr),
-				storer:        storer,
-				searchTrigger: &SearchTriggerMock{},
+				log:         slog.New(slog.DiscardHandler),
+				db:          c.DB,
+				storer:      storer,
+				searchQueue: queue,
 			}
 
 			req := httptest.NewRequest(http.MethodPost, "http://test.com/", http.NoBody)
@@ -1190,7 +1486,7 @@ func Test_Handler_TeardownOrganization(t *testing.T) {
 			hdl.TeardownOrganization(rec, req.WithContext(ctx))
 
 			for _, ch := range c.Checks {
-				ch(t, c.DB, c.Tx, storer, rec)
+				ch(t, c.DB, c.Tx, queue, storer, rec)
 			}
 		})
 	}

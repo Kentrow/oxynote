@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { NodeViewContent, nodeViewProps, NodeViewWrapper } from "@tiptap/vue-3"
 import CodeButtons from "./CodeButtons.vue"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import { explicitContentPlaceholder } from "../../placeholder"
 import { TITLED_CODE_BLOCK_NAME } from "../node-names"
 import type { CodeBlockOptions } from "./index"

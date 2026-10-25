@@ -4,7 +4,7 @@ import type { Editor } from "@tiptap/core"
 import { Extension } from "@tiptap/core"
 import { Plugin, Selection, TextSelection } from "@tiptap/pm/state"
 import { isChangeOrigin } from "@tiptap/extension-collaboration"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import CollaborationCaret from "@tiptap/extension-collaboration-caret"
 
 export function renderCollaborationCaret(

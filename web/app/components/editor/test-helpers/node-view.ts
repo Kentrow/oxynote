@@ -5,7 +5,7 @@ import { mountSuspended } from "@nuxt/test-utils/runtime"
 import type { Editor } from "@tiptap/vue-3"
 import type { Node as PMNode } from "@tiptap/pm/model"
 import { vi } from "vitest"
-import { TooltipProvider } from "~/components/shadcn/ui/tooltip"
+import { TooltipProvider } from "#layers/ui/app/components/shadcn/ui/tooltip"
 
 // eslint's ts program resolves .vue imports as error typed, so a
 // component handed to mountNodeView looks unsafe to it while vue-tsc

@@ -1,6 +1,6 @@
 <script lang="ts" setup>
-import { cn } from "~/lib/utils"
-import ColorSelect from "../../../ColorSelect.vue"
+import { cn } from "#layers/ui/app/lib/utils"
+import ColorSelect from "../../../../ColorSelect.vue"
 import { DiffStatus } from "~/components/editor/diff/position-map"
 
 const props = defineProps<{
@@ -58,7 +58,9 @@ watchImmediate(
 				>
 					<div
 						class="size-3.5 rounded-full transition-colors"
-						:style="{ backgroundColor: thresholdColor }"
+						:style="{
+							backgroundColor: thresholdColor && paletteColor(thresholdColor),
+						}"
 					/>
 				</ShadcnUiButton>
 			</ShadcnUiPopoverTrigger>

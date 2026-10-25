@@ -3,11 +3,12 @@ import { afterEach, beforeEach, describe, it } from "vitest"
 import MetricDiffDetails from "./MetricDiffDetails.vue"
 import { makeNode } from "../../test-helpers/node-view"
 import { METRIC_BLOCK_NAME } from "../node-names"
+import { VisualizationTimeUnit } from "./utils"
+import { RefreshInterval, TimeRangePreset } from "~/utils/time-range"
 import {
-	RefreshInterval,
-	TimeRangePreset,
-	VisualizationTimeUnit,
-} from "./utils"
+	METRIC_REFRESH_INTERVAL_REFERENCE,
+	METRIC_TIME_RANGE_REFERENCE,
+} from "~/utils/variable"
 import { DiffStatus } from "~/components/editor/diff/position-map"
 import { settleMutations, t } from "~/components/test-helpers"
 import {
@@ -115,15 +116,41 @@ describe("<MetricDiffDetails>", { concurrent: false }, () => {
 		expect(rows(wrapper)).toEqual([
 			[
 				t("editor.metrics.config.time-range-label"),
-				t("editor.metrics.config.time-range-options.last_15_minutes"),
-				t("editor.metrics.config.time-range-options.last_5_minutes"),
+				t("general.time-range-options.last_15_minutes"),
+				t("general.time-range-options.last_5_minutes"),
 			],
 			[
 				t("editor.metrics.config.refresh-interval-label"),
-				t("editor.metrics.config.refresh-interval-options.1m"),
-				t("editor.metrics.config.refresh-interval-options.5m"),
+				t("general.refresh-interval-options.1m"),
+				t("general.refresh-interval-options.5m"),
 			],
 			[t("editor.metrics.config.thresholds-label"), "1", "2"],
+		])
+	})
+
+	it("names the built-in variable a setting follows", async ({ expect }) => {
+		const wrapper = await mountDetails(
+			{
+				timeRange: METRIC_TIME_RANGE_REFERENCE,
+				refreshInterval: METRIC_REFRESH_INTERVAL_REFERENCE,
+			},
+			{
+				timeRange: TimeRangePreset.Last5Minutes,
+				refreshInterval: RefreshInterval.M5,
+			},
+		)
+
+		expect(rows(wrapper)).toEqual([
+			[
+				t("editor.metrics.config.time-range-label"),
+				t("editor.metrics.config.variable-time-range"),
+				t("general.time-range-options.last_5_minutes"),
+			],
+			[
+				t("editor.metrics.config.refresh-interval-label"),
+				t("editor.metrics.config.variable-refresh-interval"),
+				t("general.refresh-interval-options.5m"),
+			],
 		])
 	})
 

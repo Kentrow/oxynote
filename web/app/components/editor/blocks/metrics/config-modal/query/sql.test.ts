@@ -6,10 +6,12 @@ import {
 	type Completion,
 	type CompletionSource,
 } from "@codemirror/autocomplete"
-import { TimeRangePreset } from "../../utils"
+import { TimeRangePreset } from "~/utils/time-range"
 import {
 	installAutoImportGlobals,
+	interpolatingT,
 	stubSQLAPI,
+	variableTree,
 	type SQLStubData,
 } from "./test-helpers"
 import { useSQLLegendExtension, useSQLQueryExtension } from "./sql"
@@ -22,7 +24,7 @@ vi.mock("~/composables/api/useSQLDataSourceAPI", () => ({
 	default: sqlAPIMock,
 }))
 
-const t = (key: string) => key
+const t = interpolatingT
 
 const METADATA: SQLMetadataResult = {
 	tables: {
@@ -39,6 +41,7 @@ const METADATA: SQLMetadataResult = {
 function makeComplete(
 	dataSourceType: DataSourceType | null,
 	data?: SQLStubData,
+	variables: VariableTreeResponse = [],
 ) {
 	const stub = stubSQLAPI(sqlAPIMock, data)
 	const { extensions } = useSQLQueryExtension(
@@ -47,6 +50,7 @@ function makeComplete(
 		() => dataSourceType,
 		() => TimeRangePreset.Last1Hour,
 		() => true,
+		() => variables,
 	)
 
 	// merges the options of every completion source active at pos, the
@@ -79,6 +83,7 @@ function makeLegend(
 		query?: string | null
 		timeRange?: TimeRangePreset | null
 		data?: SQLStubData
+		variables?: VariableTreeResponse
 	} = {},
 ) {
 	const stub = stubSQLAPI(sqlAPIMock, options.data)
@@ -88,6 +93,7 @@ function makeLegend(
 		() =>
 			"timeRange" in options ? options.timeRange : TimeRangePreset.Last1Hour,
 		() => true,
+		() => options.variables ?? [],
 	)
 
 	return { ...stub, ...legend }
@@ -208,9 +214,110 @@ describe("useSQLQueryExtension", () => {
 
 		expect(options.map((o) => o.label)).not.toContain("users")
 	})
+
+	describe("when variables exist", () => {
+		it.for([
+			{ name: "offers the variables as a selected value", doc: "SELECT $" },
+			{ name: "offers the variables as a table", doc: "SELECT a FROM $" },
+			{ name: "offers the variables after an operator", doc: "WHERE a = $" },
+			{ name: "offers the variables after a comma", doc: "SELECT a, $" },
+			{ name: "offers the variables in a list", doc: "WHERE a IN ($" },
+			{ name: "offers the variables after a dot", doc: "FROM public.$" },
+			{ name: "offers the variables as a limit", doc: "SELECT a LIMIT $" },
+			{ name: "offers the variables inside a string", doc: "WHERE a = '$" },
+			{
+				name: "offers the variables inside a quoted name",
+				doc: 'SELECT "$',
+			},
+		])("$name", async ({ doc }, { expect }) => {
+			const { complete } = makeComplete(
+				DataSourceType.PostgreSQL,
+				undefined,
+				variableTree(),
+			)
+
+			const labels = (await complete(doc, doc.length)).map((o) => o.label)
+
+			expect(labels).toContain("$env")
+			expect(labels).toContain("$window")
+			expect(labels).toContain("$__timeFilter(dateColumn)")
+		})
+
+		it.for([
+			{ name: "refuses the variables at the start", doc: "$" },
+			{ name: "refuses the variables after a value", doc: "SELECT a $" },
+			{
+				name: "refuses the variables after a closed string",
+				doc: "WHERE a = 'x' $",
+			},
+			{
+				name: "refuses the variables after a closing bracket",
+				doc: "SELECT count(*) $",
+			},
+			{
+				name: "refuses the variables after a keyword that needs another",
+				doc: "SELECT a FROM t ORDER $",
+			},
+			{
+				name: "refuses the variables at the start of the next statement",
+				doc: "SELECT 1; $",
+			},
+		])("$name", async ({ doc }, { expect }) => {
+			const { complete } = makeComplete(
+				DataSourceType.PostgreSQL,
+				undefined,
+				variableTree(),
+			)
+
+			const labels = (await complete(doc, doc.length)).map((o) => o.label)
+
+			expect(labels).not.toContain("$env")
+			expect(labels).toContain("$__timeFilter(dateColumn)")
+		})
+
+		it("offers the variables for a data source type without macros", async ({
+			expect,
+		}) => {
+			const { complete } = makeComplete(null, undefined, variableTree())
+
+			const labels = (await complete("SELECT $", 8)).map((o) => o.label)
+
+			expect(labels).toEqual(["$env", "$window"])
+		})
+
+		it("describes a variable by its name and the value it resolves to", async ({
+			expect,
+		}) => {
+			const { complete } = makeComplete(null, undefined, variableTree())
+
+			const options = await complete("SELECT $", 8)
+
+			expect(options[0]).toMatchObject({
+				label: "$env",
+				type: "variable",
+				detail: t("general.variable-types.list"),
+				info: t("editor.metrics.config.query-info.variable", {
+					value: "prod",
+				}),
+			})
+		})
+	})
 })
 
 describe("useSQLLegendExtension", () => {
+	it("keys the labels lookup by the values the query references", ({
+		expect,
+	}) => {
+		const { captured } = makeLegend({
+			query: "SELECT * FROM t WHERE env = '$env'",
+			variables: variableTree(),
+		})
+
+		expect(toValue(captured.labelsParams)?.variableValues).toEqual({
+			env: "prod",
+		})
+	})
+
 	it("requests labels for the debounced query and time range", ({ expect }) => {
 		const { captured } = makeLegend({ query: "SELECT hostname FROM hosts" })
 

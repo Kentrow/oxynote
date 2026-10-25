@@ -10,7 +10,7 @@ import {
 	type EditorStub,
 } from "../../test-helpers/node-view"
 import { emitFrom } from "~/components/test-helpers"
-import { Select } from "~/components/shadcn/ui/select"
+import { Select } from "#layers/ui/app/components/shadcn/ui/select"
 
 const GO_SNIPPET =
 	'package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("hi")\n}\n'

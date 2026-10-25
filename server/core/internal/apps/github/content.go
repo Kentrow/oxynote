@@ -28,63 +28,6 @@ type Repository struct {
 	DefaultBranch string `json:"defaultBranch"`
 }
 
-// Issue represents a GitHub issue.
-type Issue struct {
-	// ID is the unique identifier of the issue.
-	ID int64 `json:"id"`
-
-	// Title is the title of the issue.
-	Title string `json:"title"`
-
-	// URL is the URL of the issue.
-	URL string `json:"url"`
-
-	// UserID is the ID of the user who created the issue.
-	UserID int64 `json:"userId"`
-
-	// Draft indicates whether the issue is a draft.
-	Draft bool `json:"draft"`
-
-	// State is the current state of the issue, such as "open" or "closed".
-	State string `json:"state"`
-
-	// UpdatedAt is the timestamp when the issue was last updated.
-	UpdatedAt string `json:"updatedAt"`
-
-	// CreatedAt is the timestamp when the issue was created.
-	CreatedAt string `json:"createdAt"`
-}
-
-// FileContent represents the content of a file in a GitHub repository.
-type FileContent struct {
-	// Path is the file path within the repository.
-	Path string `json:"path"`
-
-	// Content is the decoded text content of the file.
-	Content string `json:"content"`
-
-	// SHA is the git SHA of the file.
-	SHA string `json:"sha"`
-
-	// Size is the size of the file in bytes.
-	Size int `json:"size"`
-}
-
-// CodeSearchResult represents a single code search result.
-type CodeSearchResult struct {
-	// Name is the filename.
-	Name string `json:"name"`
-
-	// Path is the file path within the repository.
-	Path string `json:"path"`
-
-	// URL is the HTML URL of the file.
-	URL string `json:"url"`
-
-	// Fragments contains text fragments showing where the match occurred.
-	Fragments []string `json:"fragments,omitempty"`
-}
-
 // Tree represents a Git tree structure.
 type Tree []TreeItem
 

@@ -61,6 +61,7 @@ function makeInstance(
 		parentId?: string | null
 		insideWrapperOf?: { wrapper: HTMLElement }
 		item?: Partial<SidebarItem>
+		noopFor?: string
 	},
 ) {
 	const dragOptions: CapturedDragOptions = {}
@@ -108,7 +109,7 @@ function makeInstance(
 			document.createElement("div"),
 			() => wrapper,
 			onConfirm,
-			{ minDistance: 5 },
+			{ minDistance: 5, noopFor: opts?.noopFor },
 		)
 	})
 
@@ -290,6 +291,42 @@ describe("useSidebarDraggable", { concurrent: false }, () => {
 			targetParentId: null,
 			targetInsertBeforeId: "b",
 		})
+	})
+
+	it("does not target an item where a drop would leave the dragged one in place", async ({
+		expect,
+	}) => {
+		const dragged = makeInstance("a")
+		const next = makeInstance("b", { parentId: "root", noopFor: "a" })
+		startDrag(dragged)
+
+		next.mouse.isOutside.value = false
+		next.topEdgeMouse.isOutside.value = false
+		await nextTick()
+
+		expect(next.api.isItemDraggedOn.value).toBe(false)
+		expect(next.api.isTopEdgeDraggedOn.value).toBe(false)
+
+		dragged.dragOptions.onEnd?.()
+
+		expect(dragged.onConfirm).toHaveBeenCalledTimes(0)
+	})
+
+	it("stops the page reacting to the pointer only while a drag runs", ({
+		expect,
+	}) => {
+		const item = makeInstance("a")
+		startDrag(item)
+		const during = document.documentElement.classList.contains(
+			"[&_*]:pointer-events-none!",
+		)
+
+		item.dragOptions.onEnd?.()
+
+		expect(during).toBe(true)
+		expect(
+			document.documentElement.classList.contains("[&_*]:pointer-events-none!"),
+		).toBe(false)
 	})
 
 	it("ends without a confirm when nothing was targeted", ({ expect }) => {

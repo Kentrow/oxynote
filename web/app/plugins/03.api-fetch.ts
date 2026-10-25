@@ -134,6 +134,13 @@ export async function redirectToFirst(
 	fetchDocumentTree: ReturnType<typeof useDocumentAPI>["fetchDocumentTree"],
 	pendingDeletionId: string | null,
 ) {
+	// during SSR the nuxt context is a module global that a concurrent
+	// request clears. It is only reliable before the first await here, so
+	// take the app now and navigate through it.
+	const nuxtApp = useNuxtApp()
+	const redirect = (path: string) =>
+		nuxtApp.runWithContext(() => navigateTo(path, { replace: true }))
+
 	if (orgRealName === null) {
 		const orgData = await fetchOrganization.refresh()
 		orgRealName = orgData.data?.data?.slug || ""
@@ -143,30 +150,23 @@ export async function redirectToFirst(
 	// double slash, which the router treats as a protocol-relative url —
 	// fall back to the root and let the redirect middleware resolve it
 	if (!orgRealName) {
-		return navigateTo("/", { replace: true })
+		return redirect("/")
 	}
 
 	const docTree = await fetchDocumentTree.refresh()
 	if (!docTree.data?.length) {
-		return navigateTo(`/${createNameSlug(orgRealName)}`, {
-			replace: true,
-		})
+		return redirect(`/${createNameSlug(orgRealName)}`)
 	}
 
 	const firstDoc = docTree.data.find((v) => v.id !== pendingDeletionId)
 	if (!firstDoc) {
-		return navigateTo(`/${createNameSlug(orgRealName)}`, {
-			replace: true,
-		})
+		return redirect(`/${createNameSlug(orgRealName)}`)
 	}
 
-	return navigateTo(
+	return redirect(
 		`/${createNameSlug(orgRealName)}/${createNameSlugWithId(
 			firstDoc.documentName,
 			firstDoc.id,
 		)}`,
-		{
-			replace: true,
-		},
 	)
 }

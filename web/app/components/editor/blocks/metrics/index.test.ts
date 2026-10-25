@@ -20,13 +20,8 @@ import {
 	MetricGrid,
 	setUpMetricBlock,
 } from "."
-import { MetricBlockWidth, RefreshInterval, TimeRangePreset } from "./utils"
-
-// the block attribute defaults come from defaultMetricConfig, which
-// resolves CSS variables through a canvas — unavailable in node
-vi.mock("~/assets/css", () => ({
-	chartStyles: () => ({ selectableColors: { default: "#8a3ffc" } }),
-}))
+import { MetricBlockWidth } from "./utils"
+import { RefreshInterval, TimeRangePreset } from "~/utils/time-range"
 
 // a nesting context standing in for the real containers that accept a
 // bare metric block (e.g. the split documentation right side)
@@ -231,7 +226,7 @@ describe("MetricBlock", () => {
 				timeRange: TimeRangePreset.Last5Minutes,
 				refreshInterval: RefreshInterval.M5,
 				thresholds: null,
-				baseThresholdColor: "#8a3ffc",
+				baseThresholdColor: "green",
 				decimals: null,
 				unitType: null,
 				unitCustom: null,

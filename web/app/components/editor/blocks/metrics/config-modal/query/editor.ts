@@ -1,8 +1,9 @@
 import { EditorView } from "codemirror"
 import { EditorState } from "@codemirror/state"
 import { usePromQLLegendExtension, usePromQLQueryExtension } from "./promql"
-import type { TimeRangePreset } from "../../utils"
+import type { TimeRangePreset } from "~/utils/time-range"
 import { useSQLLegendExtension, useSQLQueryExtension } from "./sql"
+import type { VariableTreeResponse } from "~/utils"
 
 export const codemirrorTheme = EditorView.theme({
 	"&": {
@@ -181,6 +182,7 @@ export function useQueryEditorExtension(
 	dataSourceId: MaybeRefOrGetter<string | null | undefined>,
 	timeRange: MaybeRefOrGetter<TimeRangePreset | null | undefined>,
 	isEditingEnabled: MaybeRefOrGetter<boolean | null | undefined>,
+	variables: MaybeRefOrGetter<VariableTreeResponse>,
 ) {
 	const { fetchDataSources } = useDataSourceAPI()
 	const selectedDataSourceType = computed(() => {
@@ -194,6 +196,7 @@ export function useQueryEditorExtension(
 		dataSourceId,
 		timeRange,
 		() => selectedDataSourceType.value === DataSourceType.Prometheus,
+		variables,
 	)
 	const sqlExtension = useSQLQueryExtension(
 		t,
@@ -201,6 +204,7 @@ export function useQueryEditorExtension(
 		selectedDataSourceType,
 		timeRange,
 		() => isDataSourceSQLBased(selectedDataSourceType.value),
+		variables,
 	)
 
 	return {
@@ -232,6 +236,7 @@ export function useLegendEditorExtension(
 	query: MaybeRefOrGetter<string | null | undefined>,
 	dataSourceId: MaybeRefOrGetter<string | null | undefined>,
 	timeRange: MaybeRefOrGetter<TimeRangePreset | null | undefined>,
+	variables: MaybeRefOrGetter<VariableTreeResponse>,
 ) {
 	const { fetchDataSources } = useDataSourceAPI()
 	const selectedDataSourceType = computed(() => {
@@ -245,12 +250,14 @@ export function useLegendEditorExtension(
 		dataSourceId,
 		timeRange,
 		() => selectedDataSourceType.value === DataSourceType.Prometheus,
+		variables,
 	)
 	const sqlExtension = useSQLLegendExtension(
 		query,
 		dataSourceId,
 		timeRange,
 		() => isDataSourceSQLBased(selectedDataSourceType.value),
+		variables,
 	)
 
 	async function fetchAllLabelNames() {

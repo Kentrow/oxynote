@@ -1,0 +1,51 @@
+name: QA
+
+on:
+  # the release workflow runs every gate on a tag and publishes only
+  # once they all pass, so each one has to be callable.
+  workflow_call:
+  push:
+    branches:
+      - main
+    paths:
+      - web/app/utils/icon.ts
+      - server/core/internal/assistant/icon/icons.json
+      - scripts/check-icons.mjs
+      - .github/workflows/qa-icons.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - web/app/utils/icon.ts
+      - server/core/internal/assistant/icon/icons.json
+      - scripts/check-icons.mjs
+      - .github/workflows/qa-icons.yml
+
+# a newer push supersedes the still-running workflow of the stale commit
+# and cancels it. The group carries a hardcoded per-file prefix because
+# every QA workflow shares the display name "QA", so github.workflow
+# would put them all in one group and let a run of one workflow cancel
+# an in-flight run of another.
+concurrency:
+  group: qa-icons-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: Comparing the web and core icon lists
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Compare the icon lists
+        run: node scripts/check-icons.mjs

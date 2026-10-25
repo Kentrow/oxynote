@@ -146,6 +146,15 @@ describe("<McpSection>", { concurrent: false }, () => {
 		expect(wrapper.text()).toContain(t("settings.mcp.scopes.data-sources-read"))
 	})
 
+	it("names the offline-access scope", async ({ expect }) => {
+		mockClientName("Claude Code")
+		seedConsents([makeConsent({ scopes: ["offline_access"] })])
+
+		const wrapper = await mountSuspended(McpSection)
+
+		expect(wrapper.text()).toContain(t("settings.mcp.scopes.offline-access"))
+	})
+
 	it("shows an unrecognised scope verbatim rather than dropping it", async ({
 		expect,
 	}) => {

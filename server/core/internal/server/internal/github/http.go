@@ -300,41 +300,6 @@ func (h *Handler) FetchRepositoryBranches(w http.ResponseWriter, r *http.Request
 	httpserver.Respond(h.log, w, branches, http.StatusOK)
 }
 
-// FetchIssues retrieves Github issues.
-func (h *Handler) FetchIssues(w http.ResponseWriter, r *http.Request) {
-	session, ok := auth.RequireSession(h.log, w, r)
-	if !ok {
-		return
-	}
-
-	var data struct {
-		Q string `schema:"q"`
-
-		// Repository is the repository to search issues.
-		Repository string `schema:"repository"`
-	}
-
-	err := httpserver.DecodeForm(r, &data)
-	if err != nil {
-		httpserver.RespondError(h.log, w, err)
-		return
-	}
-
-	client, err := h.man.GetInstallationClient(r.Context(), session.ActiveOrganizationID)
-	if err != nil {
-		httpserver.RespondError(h.log, w, err)
-		return
-	}
-
-	issues, err := client.FetchIssues(r.Context(), data.Q, data.Repository)
-	if err != nil {
-		httpserver.RespondError(h.log, w, err)
-		return
-	}
-
-	httpserver.Respond(h.log, w, issues, http.StatusOK)
-}
-
 // DisconnectOrganization handles the disconnection of a Github organization from the application.
 func (h *Handler) DisconnectOrganization(w http.ResponseWriter, r *http.Request) {
 	session, ok := auth.RequireSession(h.log, w, r)

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import FileSelectInput from "./FileSelectInput.vue"
-import { cn } from "~/lib/utils"
+import { cn } from "#layers/ui/app/lib/utils"
 import HookConfigPanel from "../HookConfigPanel.vue"
 import HookNoticeValue from "../HookNoticeValue.vue"
 import HookReadonlyField from "../HookReadonlyField.vue"

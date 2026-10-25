@@ -1,9 +1,11 @@
 import { expect, test } from "@playwright/test"
 import {
 	contentEditor,
+	contentPane,
 	createDocument,
 	documentPersisted,
 	editorText,
+	openBlockMenu,
 	openDocumentActions,
 	openSlashMenu,
 	readModeToggle,
@@ -355,5 +357,96 @@ test.describe("editor", () => {
 		)
 		await expect(child).toHaveText(parent)
 		await expect(child).not.toHaveAttribute("data-optimistic-insert", "")
+	})
+
+	test("drops the linked block when a block is dragged", async ({
+		page,
+		request,
+	}) => {
+		await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+		await signUpWithWorkspace(page, request)
+		await createDocument(page)
+		await contentEditor(page).click()
+		await page.keyboard.type("First")
+		await page.keyboard.press("Enter")
+		await page.keyboard.type("Second")
+		const first = contentEditor(page).getByText("First", { exact: true })
+		const second = contentEditor(page).getByText("Second", { exact: true })
+		await openBlockMenu(page, contentPane(page), second)
+		await page
+			.getByRole("menuitem", {
+				name: t("editor.drag-handle.options.copy-link"),
+			})
+			.click()
+		await expect
+			.poll(() => page.evaluate(() => navigator.clipboard.readText()), {
+				message: "the block link reaches the clipboard",
+			})
+			.toContain("#")
+		const link = new URL(
+			await page.evaluate(() => navigator.clipboard.readText()),
+		)
+		await documentPersisted(page)
+		await visit(page, link.href)
+		const highlight = page.locator(".editor-scroll-highlight")
+		await expect(highlight).toBeVisible({ timeout: 15_000 })
+
+		const target = await second.boundingBox()
+		expect(target).not.toBeNull()
+
+		await first.hover()
+		await contentPane(page)
+			.locator('.z-drag-handle [data-slot="dropdown-menu-trigger"]', {
+				has: page.locator('[class*="dots-line"]'),
+			})
+			.hover()
+		await page.mouse.down()
+		await page.mouse.move(
+			(target?.x ?? 0) + 20,
+			(target?.y ?? 0) + (target?.height ?? 0) - 2,
+			{ steps: 10 },
+		)
+		await page.mouse.up()
+
+		await expect.poll(() => editorText(contentEditor(page))).toBe("SecondFirst")
+		await expect(page).toHaveURL(link.href.replace(link.hash, ""))
+		await expect(highlight).toHaveCount(0)
+	})
+
+	test("drops the linked block when the document is typed in", async ({
+		page,
+		request,
+	}) => {
+		await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+		await signUpWithWorkspace(page, request)
+		await createDocument(page)
+		await contentEditor(page).click()
+		await page.keyboard.type("Linked")
+		const block = contentEditor(page).getByText("Linked", { exact: true })
+		await openBlockMenu(page, contentPane(page), block)
+		await page
+			.getByRole("menuitem", {
+				name: t("editor.drag-handle.options.copy-link"),
+			})
+			.click()
+		await expect
+			.poll(() => page.evaluate(() => navigator.clipboard.readText()), {
+				message: "the block link reaches the clipboard",
+			})
+			.toContain("#")
+		const link = new URL(
+			await page.evaluate(() => navigator.clipboard.readText()),
+		)
+		await documentPersisted(page)
+		await visit(page, link.href)
+		const highlight = page.locator(".editor-scroll-highlight")
+		await expect(highlight).toBeVisible({ timeout: 15_000 })
+
+		// a click would drop the linked block by itself
+		await contentEditor(page).focus()
+		await page.keyboard.type("!")
+
+		await expect(page).toHaveURL(link.href.replace(link.hash, ""))
+		await expect(highlight).toHaveCount(0)
 	})
 })
