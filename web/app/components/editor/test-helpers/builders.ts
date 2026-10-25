@@ -61,3 +61,20 @@ export function jsonDocBuilder(schema: Schema) {
 	return (...content: JSONContent[]): PMNode =>
 		schema.nodeFromJSON({ type: "doc", content })
 }
+
+// the pointer event a finger sends at a point
+export function touchPointer(
+	type: string,
+	clientX: number,
+	clientY: number,
+): PointerEvent {
+	return new PointerEvent(type, {
+		bubbles: true,
+		cancelable: true,
+		pointerType: "touch",
+		pointerId: 1,
+		isPrimary: true,
+		clientX,
+		clientY,
+	})
+}

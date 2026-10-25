@@ -34,6 +34,9 @@ const emit = defineEmits<{
 const { isLocked, updateLock, isReadOnlyOrDiff } = useEditorMeta()
 const { isScrolling } = useWindowScroll()
 const isMinWidth1024px = useMediaQuery("(min-width: 1024px)")
+// a screen that cannot hover hides the handle, hook button included, so
+// the block menu carries the hook options there at any width
+const cannotHover = useMediaQuery("(hover: none)")
 
 const { show: showHighlight, hide: hideHighlight } = useHighlightOverlay()
 const nodeActionMenuOpen = ref(false)
@@ -122,6 +125,15 @@ function getCurrentNodeEl(): HTMLElement | null {
 	return props.editor.view.nodeDOM(hoveredNodePos.value) as HTMLElement | null
 }
 
+// a touch hold marks its block the way hovering the handle does, before
+// the release opens the menu or a move drags the block
+function highlightHeldNode() {
+	const nodeEl = getCurrentNodeEl()
+	if (nodeEl) {
+		createDragOverlay(nodeEl)
+	}
+}
+
 function handleDragHoverEnter() {
 	hoveringDrag.value = true
 
@@ -191,9 +203,11 @@ function dragEnd() {
 		:provider="props.dataSyncProvider"
 		:locked="isLocked"
 		:on-drag-cancel="dragEnd"
-		class="z-drag-handle pr-1 transition-[opacity,visibility] duration-100 lg:pr-1.5"
+		class="z-drag-handle pr-1 transition-[opacity,visibility] duration-100 lg:pr-1.5 [@media(hover:none)]:pointer-events-none! [@media(hover:none)]:opacity-0!"
 		@node-change="handleNodeHover"
+		@node-hold="highlightHeldNode"
 		@node-long-press="nodeActionMenuOpen = true"
+		@node-hold-end="removeDragOverlay"
 		@mouseenter="handleDragHoverEnter"
 		@mouseleave="handleDragHoverLeave"
 		@focusin="handleDragHoverEnter"
@@ -213,8 +227,7 @@ function dragEnd() {
 				@update:open="(value: boolean) => (hookMenuOpen = value)"
 			>
 				<ShadcnUiDropdownMenuTrigger as-child>
-					<button
-						type="button"
+					<div
 						:data-menu-open="hookMenuOpen ? '' : undefined"
 						:class="
 							cn(
@@ -230,10 +243,10 @@ function dragEnd() {
 							name="mingcute:leaf-line"
 							:class="cn('mt-0.25 size-4.5', HOOK_ICON_STATUS_CLASS)"
 						/>
-						<span class="sr-only">
-							{{ $t("editor.hook-handle.screen-reader-hint") }}
-						</span>
-					</button>
+					</div>
+					<span class="sr-only">
+						{{ $t("editor.hook-handle.screen-reader-hint") }}
+					</span>
 				</ShadcnUiDropdownMenuTrigger>
 				<ShadcnUiDropdownMenuContent side="right" align="start" loop>
 					<HookMenuContent
@@ -246,8 +259,7 @@ function dragEnd() {
 			</ShadcnUiDropdownMenu>
 			<ShadcnUiDropdownMenu v-model:open="nodeActionMenuOpen">
 				<ShadcnUiDropdownMenuTrigger as-child>
-					<button
-						type="button"
+					<div
 						:data-menu-open="nodeActionMenuOpen ? '' : undefined"
 						:class="
 							cn(
@@ -263,10 +275,10 @@ function dragEnd() {
 								class="absolute top-1/2 left-1/2 size-5 -translate-x-1/2 -translate-y-1/2"
 							/>
 						</div>
-						<span class="sr-only">
-							{{ $t("editor.drag-handle.screen-reader-hint") }}
-						</span>
-					</button>
+					</div>
+					<span class="sr-only">
+						{{ $t("editor.drag-handle.screen-reader-hint") }}
+					</span>
 				</ShadcnUiDropdownMenuTrigger>
 				<ShadcnUiDropdownMenuContent
 					class="select-none"
@@ -274,7 +286,7 @@ function dragEnd() {
 					align="start"
 					loop
 				>
-					<template v-if="compactHandles">
+					<template v-if="compactHandles || cannotHover">
 						<HookMenuContent
 							:active-branch-hooks="processedActiveBranchHooks"
 							:target-branch-hooks="props.targetBranchHooks"

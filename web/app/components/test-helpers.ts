@@ -180,12 +180,15 @@ export function clearTeleportedOverlays() {
 
 // useMediaQuery reads matchMedia, which happy-dom does not implement — the
 // composable then reports "not matching" for every query, so any layout
-// that switches on viewport width needs this to pick a side deliberately
-export function stubViewportMatches(matches: boolean) {
+// that switches on viewport width needs this to pick a side deliberately.
+// A function picks per query, for a layout that reads several.
+export function stubViewportMatches(
+	matches: boolean | ((query: string) => boolean),
+) {
 	vi.stubGlobal(
 		"matchMedia",
 		vi.fn((query: string) => ({
-			matches: matches,
+			matches: typeof matches === "boolean" ? matches : matches(query),
 			media: query,
 			onchange: null,
 			addEventListener: vi.fn(),

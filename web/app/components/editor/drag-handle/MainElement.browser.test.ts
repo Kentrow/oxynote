@@ -7,6 +7,7 @@ import { mount, type VueWrapper } from "@vue/test-utils"
 import { afterEach, describe, it, vi } from "vitest"
 import { h } from "vue"
 import { DragHandle } from "./MainElement"
+import { touchPointer } from "~/components/editor/test-helpers"
 
 const cleanups: (() => void)[] = []
 
@@ -150,39 +151,63 @@ describe("DragHandle", { concurrent: false }, () => {
 		expect(element.draggable).toBe(false)
 	})
 
-	it("opens the menu for a touch-held block without a mouse hover", async ({
+	it("reports a touch hold on a block without a mouse hover", async ({
 		expect,
 	}) => {
 		const editor = makeEditor()
-		const onNodeLongPress = vi.fn()
+		const onNodeHold = vi.fn()
 		const onNodeChange = vi.fn()
-		const wrapper = mountHandle({ editor, onNodeLongPress, onNodeChange })
-		const paragraph = editor.view.dom.querySelector("p")
-		if (!paragraph) {
-			throw new Error("the test needs a paragraph")
-		}
-		const rect = paragraph.getBoundingClientRect()
+		const wrapper = mountHandle({
+			editor,
+			onNodeHold,
+			onNodeLongPress: vi.fn(),
+			onNodeChange,
+		})
 		vi.useFakeTimers()
 
 		try {
-			paragraph.dispatchEvent(
-				new PointerEvent("pointerdown", {
-					bubbles: true,
-					pointerType: "touch",
-					pointerId: 1,
-					isPrimary: true,
-					clientX: rect.left + 5,
-					clientY: rect.top + rect.height / 2,
+			await holdParagraph(editor)
+
+			expect.soft(onNodeHold).toHaveBeenCalledTimes(1)
+			expect.soft(onNodeChange).toHaveBeenCalledWith(
+				expect.objectContaining({
+					pos: 0,
+					node: editor.state.doc.firstChild,
 				}),
 			)
-			await vi.advanceTimersByTimeAsync(500)
+			expect.soft((wrapper.element as HTMLElement).style.visibility).toBe("")
+			expect.soft(editor.view.dragging).toBeNull()
+		} finally {
+			vi.useRealTimers()
+		}
+	})
 
-			expect(onNodeLongPress).toHaveBeenCalledTimes(1)
-			expect(onNodeChange).toHaveBeenCalledWith(
-				expect.objectContaining({ pos: 0, node: editor.state.doc.firstChild }),
-			)
-			expect((wrapper.element as HTMLElement).style.visibility).toBe("")
-			expect(editor.view.dragging).toBeNull()
+	it.for([
+		{
+			name: "opens the menu when the held finger lifts",
+			input: "pointerup",
+			expected: { menus: 1, holdEnds: 0 },
+		},
+		{
+			name: "ends a hold without a menu when the touch is cancelled",
+			input: "pointercancel",
+			expected: { menus: 0, holdEnds: 1 },
+		},
+	])("$name", async ({ input, expected }, { expect }) => {
+		const editor = makeEditor()
+		const onNodeLongPress = vi.fn()
+		const onNodeHoldEnd = vi.fn()
+		mountHandle({ editor, onNodeHold: vi.fn(), onNodeLongPress, onNodeHoldEnd })
+		vi.useFakeTimers()
+
+		try {
+			await holdParagraph(editor)
+
+			document.dispatchEvent(touchPointer(input, 0, 0))
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect.soft(onNodeLongPress).toHaveBeenCalledTimes(expected.menus)
+			expect.soft(onNodeHoldEnd).toHaveBeenCalledTimes(expected.holdEnds)
 		} finally {
 			vi.useRealTimers()
 		}
@@ -206,3 +231,17 @@ describe("DragHandle", { concurrent: false }, () => {
 		})
 	})
 })
+
+// rests a finger on the editor's paragraph for as long as a hold takes
+async function holdParagraph(editor: Editor) {
+	const paragraph = editor.view.dom.querySelector("p")
+	if (!paragraph) {
+		throw new Error("the test needs a paragraph")
+	}
+
+	const rect = paragraph.getBoundingClientRect()
+	paragraph.dispatchEvent(
+		touchPointer("pointerdown", rect.left + 5, rect.top + rect.height / 2),
+	)
+	await vi.advanceTimersByTimeAsync(300)
+}

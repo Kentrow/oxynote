@@ -112,6 +112,29 @@ async function openHookMenu(wrapper: VueWrapper) {
 	await nextTick()
 }
 
+function blockMenuTrigger(wrapper: VueWrapper) {
+	const trigger = wrapper.findAll("[data-slot='dropdown-menu-trigger']").at(-1)
+	if (!trigger) {
+		throw new Error("the handle renders a block menu trigger")
+	}
+
+	return trigger
+}
+
+// the drag handle reports a touch hold through the callbacks it was handed
+function handleCallback(
+	wrapper: VueWrapper,
+	name: "onNodeHold" | "onNodeLongPress" | "onNodeHoldEnd",
+) {
+	return wrapper.findComponent(DragHandle).props(name) as () => void
+}
+
+// a hold released in place opens the block menu
+async function openHeldBlockMenu(wrapper: VueWrapper) {
+	handleCallback(wrapper, "onNodeLongPress")()
+	await nextTick()
+}
+
 async function openBlockMenu(wrapper: VueWrapper) {
 	const triggers = wrapper.findAll("[data-slot='dropdown-menu-trigger']")
 	const trigger = triggers[triggers.length - 1]
@@ -151,12 +174,7 @@ describe("<BlockHandle>", { concurrent: false }, () => {
 		stubViewportMatches(false)
 		const wrapper = await mountHandle()
 		hoverNode(wrapper, 10)
-		const onNodeLongPress = wrapper
-			.findComponent(DragHandle)
-			.props("onNodeLongPress") as () => void
-
-		onNodeLongPress()
-		await nextTick()
+		await openHeldBlockMenu(wrapper)
 
 		expect(wrapper.findComponent(CoreMenu).props("hovered")).toEqual(
 			expect.objectContaining({ nodePos: 10, nodeId: "block-1" }),
@@ -166,7 +184,7 @@ describe("<BlockHandle>", { concurrent: false }, () => {
 		)
 		expect(
 			wrapper
-				.get("button[data-slot='dropdown-menu-trigger']")
+				.get("[data-slot='dropdown-menu-trigger']")
 				.attributes("aria-expanded"),
 		).toBe("true")
 		expect(
@@ -179,19 +197,72 @@ describe("<BlockHandle>", { concurrent: false }, () => {
 		expect(grabbingCursor()).toBe(false)
 	})
 
-	it("opens the block menu from its labelled keyboard button", async ({
+	it("folds the hook options into the held block's menu on a wide screen without hover", async ({
 		expect,
 	}) => {
-		stubViewportMatches(false)
+		stubViewportMatches((query) => query !== "(hover: hover)")
 		const wrapper = await mountHandle()
 		hoverNode(wrapper, 10)
-		const trigger = wrapper.get("button[data-slot='dropdown-menu-trigger']")
 
-		await trigger.trigger("keydown", { key: "Enter" })
+		await openHeldBlockMenu(wrapper)
 
-		expect(trigger.text()).toBe(t("editor.drag-handle.screen-reader-hint"))
-		expect(trigger.attributes("aria-expanded")).toBe("true")
-		expect(wrapper.findComponent(CoreMenu).exists()).toBe(true)
+		expect(wrapper.findComponent(HookMenuContent).props("nodeId")).toBe(
+			"block-1",
+		)
+	})
+
+	it("hides the handle on a screen without hover", async ({ expect }) => {
+		const wrapper = await mountHandle()
+
+		expect(handleRoot(wrapper).classes()).toEqual(
+			expect.arrayContaining([
+				"[@media(hover:none)]:opacity-0!",
+				"[@media(hover:none)]:pointer-events-none!",
+			]),
+		)
+	})
+
+	it("highlights the block a finger holds before any menu opens", async ({
+		expect,
+	}) => {
+		const wrapper = await mountHandle()
+		hoverNode(wrapper, 10)
+
+		handleCallback(wrapper, "onNodeHold")()
+		await nextTick()
+
+		expect.soft(dragOverlays()).toHaveLength(1)
+		expect
+			.soft(blockMenuTrigger(wrapper).attributes("aria-expanded"))
+			.toBe("false")
+	})
+
+	it("drops the highlight when the hold ends without a menu", async ({
+		expect,
+	}) => {
+		const wrapper = await mountHandle()
+		hoverNode(wrapper, 10)
+		handleCallback(wrapper, "onNodeHold")()
+
+		handleCallback(wrapper, "onNodeHoldEnd")()
+		await nextTick()
+
+		expect(dragOverlays()).toHaveLength(0)
+	})
+
+	it("keeps the highlight while the menu the release opened is up", async ({
+		expect,
+	}) => {
+		const wrapper = await mountHandle()
+		hoverNode(wrapper, 10)
+		handleCallback(wrapper, "onNodeHold")()
+
+		await openHeldBlockMenu(wrapper)
+
+		expect.soft(dragOverlays()).toHaveLength(1)
+		expect
+			.soft(blockMenuTrigger(wrapper).attributes("aria-expanded"))
+			.toBe("true")
 	})
 
 	it("folds the hook handle away on a narrow screen", async ({ expect }) => {

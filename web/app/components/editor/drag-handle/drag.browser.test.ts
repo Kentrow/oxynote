@@ -15,10 +15,22 @@ import Text from "@tiptap/extension-text"
 import { Fragment, type Node as PMNode, Slice } from "@tiptap/pm/model"
 import { NodeSelection } from "@tiptap/pm/state"
 import { afterEach, describe, it, vi } from "vitest"
-import { METRIC_BLOCK_NAME, METRIC_GRID_NAME } from "../blocks/node-names"
+import {
+	METRIC_BLOCK_NAME,
+	METRIC_GRID_NAME,
+	SPLIT_DOCUMENTATION_LEFT_SIDE_NAME,
+	SPLIT_DOCUMENTATION_NAME,
+	SPLIT_DOCUMENTATION_RIGHT_SIDE_NAME,
+} from "../blocks/node-names"
 import { Drag, type DragHandleDragging } from "./drag"
 import { GapDecorations, enableGapZones } from "./gap-decorations"
-import { bulletList, taskList } from "./test-helpers"
+import {
+	bulletList,
+	SplitDocumentationLeftSideStub,
+	SplitDocumentationRightSideStub,
+	SplitDocumentationStub,
+	taskList,
+} from "./test-helpers"
 import {
 	MetricBlockStub,
 	MetricGridStub,
@@ -99,6 +111,19 @@ function metricBlock(title: string): JSONContent {
 	return { type: METRIC_BLOCK_NAME, attrs: { title } }
 }
 
+function splitDocumentation(...rightSide: JSONContent[]): JSONContent {
+	return {
+		type: SPLIT_DOCUMENTATION_NAME,
+		content: [
+			{
+				type: SPLIT_DOCUMENTATION_LEFT_SIDE_NAME,
+				content: [paragraph("left")],
+			},
+			{ type: SPLIT_DOCUMENTATION_RIGHT_SIDE_NAME, content: rightSide },
+		],
+	}
+}
+
 const cleanups: (() => void)[] = []
 
 function mountEditor(
@@ -126,6 +151,9 @@ function mountEditor(
 			TaskItem.configure({ nested: true }),
 			MetricGrid,
 			MetricBlock,
+			SplitDocumentationStub,
+			SplitDocumentationLeftSideStub,
+			SplitDocumentationRightSideStub,
 			...(opts.gaps ? [GapDecorations] : []),
 			Drag.configure({ onBeforeDrop: opts.onBeforeDrop }),
 		],
@@ -547,15 +575,31 @@ describe("Drag", { concurrent: false }, () => {
 			expect(cursorVisible()).toBe(false)
 		})
 
-		it("refuses a drop onto the dragged block itself", ({ expect }) => {
+		it("takes a drop onto the dragged block itself without moving it", ({
+			expect,
+		}) => {
 			const editor = mountEditor([paragraph("one"), paragraph("two")])
 			startDrag(editor, 0)
 			const point = topOf(q(editor, "p", 0))
 
-			expect(callHandleDrop(editor, point)).toBe(false)
+			expect(callHandleDrop(editor, point)).toBe(true)
 			expect(editor.state.doc.toString()).toBe(
 				`doc(paragraph("one"), paragraph("two"))`,
 			)
+		})
+
+		it("leaves the document and the focus alone when a block drops onto itself", ({
+			expect,
+		}) => {
+			const editor = mountEditor([paragraph("one"), paragraph("two")])
+			startDrag(editor, 0)
+			const onTransaction = vi.fn()
+			editor.on("transaction", onTransaction)
+
+			drop(editor, centerOf(q(editor, "p", 0)))
+
+			expect.soft(onTransaction).not.toHaveBeenCalled()
+			expect.soft(editor.view.hasFocus()).toBe(false)
 		})
 
 		it("hides the cursor over an element that opts out of drops", ({
@@ -976,6 +1020,55 @@ describe("Drag", { concurrent: false }, () => {
 		})
 	})
 
+	describe("split documentation right side drops", () => {
+		it.for([
+			{
+				name: "drops before a metric block from its upper half",
+				input: { dragged: "b", over: 0, y: 0.25 },
+				expected: ["b", "a"],
+			},
+			{
+				name: "drops after a metric block from its lower half",
+				input: { dragged: "a", over: 1, y: 0.75 },
+				expected: ["b", "a"],
+			},
+		])("$name", ({ input, expected }, { expect }) => {
+			const editor = mountEditor([
+				splitDocumentation(metricBlock("a"), metricBlock("b")),
+			])
+			startDrag(editor, posOfMetricBlock(editor, input.dragged))
+			const target = q(editor, '[data-type="metric-block"]', input.over)
+			const rect = target.getBoundingClientRect()
+			const point = {
+				x: rect.left + rect.width / 2,
+				y: rect.top + rect.height * input.y,
+			}
+			dragOver(editor, point)
+
+			drop(editor, point)
+
+			expect(rightSideTitles(editor)).toEqual(expected)
+		})
+
+		it("drops a block from outside after the whole split documentation", ({
+			expect,
+		}) => {
+			const editor = mountEditor([
+				paragraph("one"),
+				splitDocumentation(metricBlock("a"), metricBlock("b")),
+			])
+			startDrag(editor, 0)
+			const target = q(editor, '[data-type="metric-block"]', 1)
+			const rect = target.getBoundingClientRect()
+			const point = { x: rect.left + rect.width / 2, y: rect.bottom - 2 }
+			dragOver(editor, point)
+
+			drop(editor, point)
+
+			expect(editor.state.doc.lastChild?.textContent).toBe("one")
+		})
+	})
+
 	describe("metric grid drops", () => {
 		it("shows a vertical cursor inside the grid and reorders blocks", ({
 			expect,
@@ -1000,6 +1093,58 @@ describe("Drag", { concurrent: false }, () => {
 			drop(editor, point)
 
 			expect(gridShape(editor)).toEqual([["a", "c", "b"]])
+		})
+
+		it.for([
+			{
+				name: "drops after a stacked block from its lower half, even on its left side",
+				input: { dragged: "a", over: 1, x: 0.25, y: 0.75 },
+				expected: [["b", "a"]],
+			},
+			{
+				name: "drops before a stacked block from its upper half, even on its right side",
+				input: { dragged: "b", over: 0, x: 0.75, y: 0.25 },
+				expected: [["b", "a"]],
+			},
+		])("$name", ({ input, expected }, { expect }) => {
+			// one block per row, the way a phone lays the grid out
+			const editor = mountEditor(
+				[metricGrid(metricBlock("a"), metricBlock("b"))],
+				{ width: 150 },
+			)
+			startDrag(editor, posOfMetricBlock(editor, input.dragged))
+			const target = q(editor, '[data-type="metric-block"]', input.over)
+			const rect = target.getBoundingClientRect()
+			const point = {
+				x: rect.left + rect.width * input.x,
+				y: rect.top + rect.height * input.y,
+			}
+			dragOver(editor, point)
+
+			drop(editor, point)
+
+			expect(gridShape(editor)).toEqual(expected)
+		})
+
+		it("shows a flat cursor under a stacked block, not a vertical one", ({
+			expect,
+		}) => {
+			const editor = mountEditor(
+				[metricGrid(metricBlock("a"), metricBlock("b"))],
+				{ width: 150 },
+			)
+			startDrag(editor, posOfMetricBlock(editor, "a"))
+			const target = q(editor, '[data-type="metric-block"]', 1)
+			const rect = target.getBoundingClientRect()
+
+			dragOver(editor, {
+				x: rect.left + rect.width / 2,
+				y: rect.top + rect.height * 0.75,
+			})
+
+			expect.soft(cursorVisible()).toBe(true)
+			expect.soft(cursorElem()?.style.height).toBe("0.1875rem")
+			expect.soft(cursorElem()?.style.width).not.toBe("0.1875rem")
 		})
 
 		it("inserts before the first block when hovering the left margin", ({
@@ -1626,3 +1771,17 @@ describe("Drag", { concurrent: false }, () => {
 		})
 	})
 })
+
+function rightSideTitles(editor: Editor): string[] {
+	const titles: string[] = []
+
+	editor.state.doc.descendants((node) => {
+		if (node.type.name === METRIC_BLOCK_NAME) {
+			titles.push(node.attrs.title as string)
+		}
+
+		return true
+	})
+
+	return titles
+}

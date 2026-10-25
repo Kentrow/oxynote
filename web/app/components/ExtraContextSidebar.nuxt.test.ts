@@ -1,4 +1,5 @@
-import { beforeEach, describe, it } from "vitest"
+import { mockNuxtImport } from "@nuxt/test-utils/runtime"
+import { beforeEach, describe, it, vi } from "vitest"
 import ExtraContextSidebar from "./ExtraContextSidebar.vue"
 import {
 	emitFrom,
@@ -7,10 +8,18 @@ import {
 	stubViewportMatches,
 } from "./test-helpers"
 
-// the viewport stub and the sidebar's persisted open state are shared by
-// every mount in the file
+// a test mount always mounts, so the tests decide whether the page counts
+// as mounted yet, as it does not while the server renders
+const page = vi.hoisted(() => ({
+	mounted: null as unknown as { value: boolean },
+}))
+mockNuxtImport("useMounted", () => () => page.mounted)
+
+// the viewport stub, the mounted stand-in and the sidebar's persisted open
+// state are shared by every mount in the file
 describe("<ExtraContextSidebar>", { concurrent: false }, () => {
 	beforeEach(() => {
+		page.mounted = ref(true)
 		seedPersistentState("sidebar-state", true)
 	})
 
@@ -24,6 +33,27 @@ describe("<ExtraContextSidebar>", { concurrent: false }, () => {
 		expect(wrapper.html()).toContain("grid-cols-[0rem]")
 		expect(positioned(wrapper).className).toContain("-translate-x-full")
 		expect(positioned(wrapper).getAttribute("style")).toContain("left: 232px")
+	})
+
+	it("hides the column on narrow screens before the page knows their width", async ({
+		expect,
+	}) => {
+		stubViewportMatches(false)
+		page.mounted = ref(false)
+
+		const wrapper = await mountPanel(false)
+
+		expect(wrapper.html()).toContain("max-[78.125rem]:hidden")
+	})
+
+	it("leaves the column to the width switch once the page has mounted", async ({
+		expect,
+	}) => {
+		stubViewportMatches(false)
+
+		const wrapper = await mountPanel(false)
+
+		expect(wrapper.html()).not.toContain("max-[78.125rem]:hidden")
 	})
 
 	it("opens the column beside the sidebar when the panel is open", async ({

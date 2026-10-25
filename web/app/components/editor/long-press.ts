@@ -1,123 +1,253 @@
-const LONG_PRESS_DELAY = 500
-const MOVE_THRESHOLD = 10
+// below Android's default long press of 400 ms, so the hold opens its menu
+// before the platform starts a text selection
+const LONG_PRESS_DELAY = 300
+// how far the finger moves before it counts as moving. That drops a
+// pending hold, or gives a held element its pointer events back, so a
+// drag of the held block can start no sooner.
+export const MOVE_THRESHOLD = 10
 const RELEASE_CLICK_DELAY = 800
 const INTERACTIVE_TARGETS =
 	'a, button, input, textarea, select, [role="button"]'
+// a control inside this attribute still starts a hold, such as the title icon
+const HOLD_ALLOWED_TARGETS = "[data-hold-opens-menu]"
+// iOS sends no contextmenu event to cancel, so its own long press is held
+// off by making the page unselectable while the finger is down
+const HELD_CLASSES = ["select-none", "[-webkit-touch-callout:none]"]
+
+export interface LongPressHandlers {
+	// returns whether the hold opened something. Only then is the release
+	// kept from reaching what lies under the finger.
+	onHold: (event: PointerEvent) => boolean
+	// every move of the held finger, which no longer scrolls the page
+	onHoldMove?: (event: PointerEvent) => void
+	// the pointerup or pointercancel that ends a hold
+	onHoldEnd?: (event: PointerEvent) => void
+}
 
 export function bindTouchLongPress(
 	element: HTMLElement,
-	onLongPress: (event: PointerEvent) => boolean,
+	handlers: LongPressHandlers,
 ): () => void {
 	const controller = new AbortController()
 	const options = { capture: true, signal: controller.signal }
-	let pending: PointerEvent | null = null
+	// the touch waiting out the delay, and then the hold it became
+	let press: PointerEvent | null = null
+	let held = false
 	let timer: ReturnType<typeof setTimeout> | undefined
-	let suppressUntil = 0
+	let releaseUntil = 0
+	// WebKit lets editable text start a selection whatever user-select says,
+	// so iOS would still run its own long press over the held text. The held
+	// element takes no pointer events, which leaves that long press nothing
+	// to select, until the finger moves off to drag and needs the page again.
+	// The bound elements set no pointer-events of their own, so giving them
+	// back clears the property, which holds up when two bindings share one.
+	let pointerEventsTaken = false
 
-	function cancel() {
+	function forgetPress() {
 		clearTimeout(timer)
-		pending = null
-		suppressUntil = 0
+		press = null
+		givePointerEventsBack()
+
+		if (held) {
+			held = false
+			document.documentElement.classList.remove(...HELD_CLASSES)
+		}
 	}
 
 	function onPointerDown(event: PointerEvent) {
 		if (
-			event.pointerType !== "touch" ||
+			!isHoldPointer(event) ||
 			!event.isPrimary ||
 			event.button !== 0 ||
 			event.defaultPrevented ||
-			(event.target instanceof Element &&
-				event.target.closest(INTERACTIVE_TARGETS)) ||
-			document.getSelection()?.isCollapsed === false
+			isExcludedControl(event.target) ||
+			isInsideSelection(event.clientX, event.clientY)
 		) {
 			return
 		}
 
-		pending = event
+		press = event
 		timer = setTimeout(() => {
-			if (onLongPress(event)) {
-				suppressUntil = Infinity
+			if (handlers.onHold(event)) {
+				held = true
+				document.documentElement.classList.add(...HELD_CLASSES)
+				pointerEventsTaken = true
+				element.style.pointerEvents = "none"
 			}
 		}, LONG_PRESS_DELAY)
 	}
 
-	function onPointerMove(event: PointerEvent) {
-		if (
-			!suppressUntil &&
-			pending?.pointerId === event.pointerId &&
-			Math.hypot(
-				event.clientX - pending.clientX,
-				event.clientY - pending.clientY,
-			) >= MOVE_THRESHOLD
-		) {
-			cancel()
-		}
-	}
-
-	function onScroll() {
-		if (!suppressUntil) {
-			cancel()
-		}
-	}
-
-	function onPointerUp(event: PointerEvent) {
-		if (pending?.pointerId !== event.pointerId) {
+	function givePointerEventsBack() {
+		if (!pointerEventsTaken) {
 			return
 		}
 
-		clearTimeout(timer)
-		pending = null
+		element.style.pointerEvents = ""
+		pointerEventsTaken = false
+	}
 
-		if (suppressUntil) {
-			suppressUntil = Date.now() + RELEASE_CLICK_DELAY
-			// menu items can turn pointerup into a programmatic click, before
-			// the browser emits its own release click.
+	// a held finger keeps its hold when another finger lands. Any other new
+	// touch cancels a pending hold and ends the release window, so the next
+	// deliberate tap on the opened menu goes through.
+	function onAnyPointerDown() {
+		if (held) {
+			return
+		}
+
+		forgetPress()
+		releaseUntil = 0
+	}
+
+	function onPointerMove(event: PointerEvent) {
+		if (press?.pointerId !== event.pointerId) {
+			return
+		}
+
+		const movedOff =
+			Math.hypot(
+				event.clientX - press.clientX,
+				event.clientY - press.clientY,
+			) >= MOVE_THRESHOLD
+
+		if (held) {
+			// the held finger belongs to the hold, so what lies under it, such
+			// as a chart and its tooltip, does not follow it
+			event.stopPropagation()
+
+			if (movedOff) {
+				givePointerEventsBack()
+			}
+
+			handlers.onHoldMove?.(event)
+			return
+		}
+
+		if (movedOff) {
+			forgetPress()
+		}
+	}
+
+	function onTouchMove(event: TouchEvent) {
+		if (held) {
+			event.preventDefault()
+			event.stopPropagation()
+		}
+	}
+
+	// a scroll or a lost window ends the wait, but not a hold already shown
+	function cancelPending() {
+		if (!held) {
+			forgetPress()
+		}
+	}
+
+	function onPointerEnd(event: PointerEvent) {
+		if (press?.pointerId !== event.pointerId) {
+			return
+		}
+
+		const wasHeld = held
+		forgetPress()
+
+		if (!wasHeld) {
+			return
+		}
+
+		// native long press handling can cancel the pointer before its
+		// context menu arrives, so a cancel opens the window as well
+		releaseUntil = Date.now() + RELEASE_CLICK_DELAY
+		handlers.onHoldEnd?.(event)
+
+		if (event.type === "pointerup") {
+			// menu items turn a pointerup into a programmatic click, before
+			// the browser emits its own release click
 			event.preventDefault()
 			event.stopImmediatePropagation()
 		}
 	}
 
-	function onPointerCancel(event: PointerEvent) {
-		if (pending?.pointerId === event.pointerId) {
-			clearTimeout(timer)
-			pending = null
-			// native long-press handling can cancel the pointer before its
-			// context menu arrives, without a later pointerup to end the hold.
-			suppressUntil = suppressUntil ? Date.now() + RELEASE_CLICK_DELAY : 0
-		}
-	}
-
 	function onContextMenu(event: MouseEvent) {
-		if (Date.now() < suppressUntil) {
+		if (held || Date.now() < releaseUntil) {
 			event.preventDefault()
 		}
 	}
 
 	function onClick(event: MouseEvent) {
-		if (event.detail && Date.now() < suppressUntil) {
-			cancel()
+		if (event.detail && Date.now() < releaseUntil) {
+			releaseUntil = 0
 			event.preventDefault()
 			event.stopImmediatePropagation()
 		}
 	}
 
-	// a new pointer cancels multi-touch gestures and clears suppression before
-	// the next deliberate tap, including a tap on the newly opened menu.
-	document.addEventListener("pointerdown", cancel, options)
+	// the document listeners run first, since a capture listener on an
+	// ancestor fires before one on the element
+	document.addEventListener("pointerdown", onAnyPointerDown, options)
 	element.addEventListener("pointerdown", onPointerDown, options)
 	document.addEventListener("pointermove", onPointerMove, options)
-	document.addEventListener("pointerup", onPointerUp, options)
-	document.addEventListener("pointercancel", onPointerCancel, options)
-	// a menu can appear under the finger, so the release click may target its
-	// portal outside the element that received the original touch. Its native
+	// only a listener that is there before the touch starts may cancel its
+	// scrolling, so this one stays bound and acts only while held
+	element.addEventListener("touchmove", onTouchMove, {
+		capture: true,
+		passive: false,
+		signal: controller.signal,
+	})
+	document.addEventListener("pointerup", onPointerEnd, options)
+	document.addEventListener("pointercancel", onPointerEnd, options)
+	// a menu can appear under the finger, so the release click may target
+	// its portal outside the element that received the touch. Its native
 	// context menu can be retargeted there too.
 	document.addEventListener("contextmenu", onContextMenu, options)
 	document.addEventListener("click", onClick, options)
-	window.addEventListener("scroll", onScroll, options)
-	window.addEventListener("blur", cancel, { signal: controller.signal })
+	window.addEventListener("scroll", cancelPending, options)
+	window.addEventListener("blur", cancelPending, { signal: controller.signal })
 
 	return () => {
-		cancel()
+		forgetPress()
+		releaseUntil = 0
 		controller.abort()
 	}
+}
+
+// a pen holds like a finger on a screen that cannot hover, such as an
+// iPad's. The handle it would tap elsewhere is hidden there.
+function isHoldPointer(event: PointerEvent): boolean {
+	return (
+		event.pointerType === "touch" ||
+		(event.pointerType === "pen" && matchMedia("(hover: none)").matches)
+	)
+}
+
+function isExcludedControl(target: EventTarget | null): boolean {
+	if (!(target instanceof Element)) {
+		return false
+	}
+
+	const control = target.closest(INTERACTIVE_TARGETS)
+
+	return !!control && !control.closest(HOLD_ALLOWED_TARGETS)
+}
+
+// a hold on selected text is left to the platform, which offers copy and
+// the selection handles there
+function isInsideSelection(x: number, y: number): boolean {
+	const selection = document.getSelection()
+	if (!selection || selection.isCollapsed) {
+		return false
+	}
+
+	for (let i = 0; i < selection.rangeCount; i++) {
+		for (const rect of selection.getRangeAt(i).getClientRects()) {
+			if (
+				x >= rect.left &&
+				x <= rect.right &&
+				y >= rect.top &&
+				y <= rect.bottom
+			) {
+				return true
+			}
+		}
+	}
+
+	return false
 }

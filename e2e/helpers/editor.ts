@@ -202,6 +202,45 @@ export async function openBlockMenu(
 	return menu
 }
 
+// a finger resting on the page after holdBlock, which can move and lift
+export interface Finger {
+	move: (x: number, y: number) => Promise<void>
+	lift: () => Promise<void>
+}
+
+// holdBlock rests a finger on the middle of a block until the hold marks
+// it. Lifting the finger then opens the block's menu, moving it drags the
+// block. Playwright's touchscreen only taps, so the finger goes through CDP
+// touch events, which chromium turns into the touch pointer events a phone
+// sends.
+export async function holdBlock(page: Page, block: Locator): Promise<Finger> {
+	const box = await block.boundingBox()
+	expect(box).not.toBeNull()
+
+	const session = await page.context().newCDPSession(page)
+	const touch = async (
+		type: "touchStart" | "touchMove" | "touchEnd",
+		touchPoints: { x: number; y: number }[],
+	) => {
+		await session.send("Input.dispatchTouchEvent", { type, touchPoints })
+	}
+
+	await touch("touchStart", [
+		{
+			x: (box?.x ?? 0) + (box?.width ?? 0) / 2,
+			y: (box?.y ?? 0) + (box?.height ?? 0) / 2,
+		},
+	])
+	await expect(
+		page.locator("[aria-hidden='true'].z-editor-overlay"),
+	).toBeVisible()
+
+	return {
+		move: (x, y) => touch("touchMove", [{ x, y }]),
+		lift: () => touch("touchEnd", []),
+	}
+}
+
 // readModeToggle is the navbar button switching the page between read and
 // edit mode. Its accessible name is the mode the page is in.
 export function readModeToggle(page: Page): Locator {

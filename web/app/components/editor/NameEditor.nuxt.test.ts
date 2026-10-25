@@ -1,6 +1,7 @@
 import { registerEndpoint } from "@nuxt/test-utils/runtime"
 import type { HocuspocusProvider } from "@hocuspocus/provider"
 import {
+	type DOMWrapper,
 	enableAutoUnmount,
 	flushPromises,
 	type VueWrapper,
@@ -145,6 +146,29 @@ function hookHandle(wrapper: VueWrapper) {
 	return wrapper.get(".group\\/hook-handle")
 }
 
+function touchInit(pointerId: number) {
+	return { pointerType: "touch", pointerId, isPrimary: true, button: 0 }
+}
+
+// the finger lifts or the browser takes the touch over. The mount is not
+// attached to the page, so the event goes to the document directly.
+async function liftFinger(type: string, pointerId = 1) {
+	document.dispatchEvent(
+		new PointerEvent(type, { ...touchInit(pointerId), cancelable: true }),
+	)
+	await nextTick()
+}
+
+// a finger resting on the target for as long as a hold takes
+async function holdTitle(
+	target: Pick<DOMWrapper<Element>, "trigger">,
+	pointerId = 1,
+) {
+	await target.trigger("pointerdown", touchInit(pointerId))
+	await vi.advanceTimersByTimeAsync(300)
+	await nextTick()
+}
+
 // the panel marking the title is appended to the body, the way the drag
 // handle marks the block it points at
 function highlightPanels(): NodeListOf<Element> {
@@ -187,32 +211,50 @@ describe("<NameEditor>", { concurrent: false }, () => {
 		disposeMockEndpoints()
 	})
 
-	it("opens the page hook menu after holding the title on touch", async ({
+	it("highlights the page while the title is held, before any menu opens", async ({
 		expect,
 	}) => {
 		const wrapper = await mountEditor()
 		vi.useFakeTimers()
 
-		await wrapper.get(".group\\/name-editor").trigger("pointerdown", {
-			pointerType: "touch",
-			pointerId: 1,
-			isPrimary: true,
-			clientX: 30,
-			clientY: 30,
-		})
-		await vi.advanceTimersByTimeAsync(500)
-		await nextTick()
+		await holdTitle(wrapper.get(".group\\/name-editor"))
 
-		expect(hookHandle(wrapper).attributes("aria-expanded")).toBe("true")
-		expect(document.body.querySelector("[role='menu']")).not.toBeNull()
-		expect(
-			document.body
-				.querySelector("[data-slot='dropdown-menu-content']")
-				?.classList.contains("select-none"),
-		).toBe(true)
-		expect(wrapper.get(".group\\/name-editor").classes()).not.toContain(
-			"select-none",
-		)
+		expect.soft(highlightPanels()).toHaveLength(1)
+		expect.soft(hookHandle(wrapper).attributes("aria-expanded")).toBe("false")
+	})
+
+	it("opens the page hook menu when the held finger lifts", async ({
+		expect,
+	}) => {
+		const wrapper = await mountEditor()
+		vi.useFakeTimers()
+		await holdTitle(wrapper.get(".group\\/name-editor"))
+
+		await liftFinger("pointerup")
+
+		expect.soft(hookHandle(wrapper).attributes("aria-expanded")).toBe("true")
+		expect.soft(document.body.querySelector("[role='menu']")).not.toBeNull()
+		expect
+			.soft(
+				document.body
+					.querySelector("[data-slot='dropdown-menu-content']")
+					?.classList.contains("select-none"),
+			)
+			.toBe(true)
+		expect.soft(highlightPanels()).toHaveLength(1)
+	})
+
+	it("drops the highlight without a menu when the title hold is cancelled", async ({
+		expect,
+	}) => {
+		const wrapper = await mountEditor()
+		vi.useFakeTimers()
+		await holdTitle(wrapper.get(".group\\/name-editor"))
+
+		await liftFinger("pointercancel")
+
+		expect.soft(highlightPanels()).toHaveLength(0)
+		expect.soft(hookHandle(wrapper).attributes("aria-expanded")).toBe("false")
 	})
 
 	it.for(["pointerup", "pointercancel"])(
@@ -220,26 +262,51 @@ describe("<NameEditor>", { concurrent: false }, () => {
 		async (event, { expect }) => {
 			const wrapper = await mountEditor()
 			vi.useFakeTimers()
-			const title = wrapper.get(".group\\/name-editor")
-			await title.trigger("pointerdown", {
-				pointerType: "touch",
-				pointerId: 1,
-				isPrimary: true,
-			})
-			await vi.advanceTimersByTimeAsync(250)
+			await wrapper
+				.get(".group\\/name-editor")
+				.trigger("pointerdown", touchInit(1))
+			await vi.advanceTimersByTimeAsync(200)
 
-			document.dispatchEvent(
-				new PointerEvent(event, {
-					pointerType: "touch",
-					pointerId: 1,
-					isPrimary: true,
-				}),
-			)
-			await vi.advanceTimersByTimeAsync(500)
+			await liftFinger(event)
+			await vi.advanceTimersByTimeAsync(300)
 
-			expect(hookHandle(wrapper).attributes("aria-expanded")).toBe("false")
+			expect.soft(hookHandle(wrapper).attributes("aria-expanded")).toBe("false")
+			expect.soft(highlightPanels()).toHaveLength(0)
 		},
 	)
+
+	it("opens the page hook menu from a hold on the title icon", async ({
+		expect,
+	}) => {
+		const wrapper = await mountEditor()
+		vi.useFakeTimers()
+		await holdTitle(wrapper.findComponent(IconPicker).get("button"))
+
+		await liftFinger("pointerup")
+
+		expect(hookHandle(wrapper).attributes("aria-expanded")).toBe("true")
+	})
+
+	it("leaves a hold beside the title alone", async ({ expect }) => {
+		const wrapper = await mountEditor()
+		vi.useFakeTimers()
+
+		await holdTitle(wrapper.get(".group\\/name-line"))
+
+		expect.soft(highlightPanels()).toHaveLength(0)
+		expect.soft(hookHandle(wrapper).attributes("aria-expanded")).toBe("false")
+	})
+
+	it("hides the hook handle on a screen without hover", async ({ expect }) => {
+		const wrapper = await mountEditor()
+
+		expect(hookHandle(wrapper).classes()).toEqual(
+			expect.arrayContaining([
+				"[@media(hover:none)]:opacity-0!",
+				"[@media(hover:none)]:pointer-events-none!",
+			]),
+		)
+	})
 
 	it("reopens the page hook menu after a touch-opened menu is dismissed", async ({
 		expect,
@@ -247,36 +314,21 @@ describe("<NameEditor>", { concurrent: false }, () => {
 		const wrapper = await mountEditor()
 		vi.useFakeTimers()
 		const title = wrapper.get(".group\\/name-editor")
-		await title.trigger("pointerdown", {
-			pointerType: "touch",
-			pointerId: 1,
-			isPrimary: true,
-		})
-		await vi.advanceTimersByTimeAsync(500)
-		document.dispatchEvent(
-			new PointerEvent("pointerup", {
-				pointerType: "touch",
-				pointerId: 1,
-				isPrimary: true,
-			}),
-		)
-		const menu = document.body.querySelector("[role='menu']")
-		expect(menu).not.toBeNull()
-		menu?.dispatchEvent(
-			new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-		)
+		await holdTitle(title)
+		await liftFinger("pointerup")
+		document.body
+			.querySelector("[role='menu']")
+			?.dispatchEvent(
+				new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+			)
 		await vi.advanceTimersByTimeAsync(200)
 		expect(hookHandle(wrapper).attributes("aria-expanded")).toBe("false")
+		await holdTitle(title, 2)
 
-		await title.trigger("pointerdown", {
-			pointerType: "touch",
-			pointerId: 2,
-			isPrimary: true,
-		})
-		await vi.advanceTimersByTimeAsync(500)
+		await liftFinger("pointerup", 2)
 
-		expect(hookHandle(wrapper).attributes("aria-expanded")).toBe("true")
-		expect(document.body.querySelectorAll("[role='menu']")).toHaveLength(1)
+		expect.soft(hookHandle(wrapper).attributes("aria-expanded")).toBe("true")
+		expect.soft(document.body.querySelectorAll("[role='menu']")).toHaveLength(1)
 	})
 
 	it("shows the icon the branch carries", async ({ expect }) => {

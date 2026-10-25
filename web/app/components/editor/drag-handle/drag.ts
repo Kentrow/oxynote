@@ -38,6 +38,14 @@ export interface DragHandleDragging {
 	sourceWrapperBounds?: { start: number; end: number } | null
 }
 
+// a metric block as the grid lays it out
+interface MetricGridBlock {
+	pos: number
+	node: Node
+	dom: HTMLElement
+	rect: DOMRect
+}
+
 function getDragging(view: EditorView): DragHandleDragging | null {
 	return view.dragging
 }
@@ -187,62 +195,16 @@ function findMetricGridDropPosition(
 		return null
 	}
 
-	// Get all MetricBlock children with their positions and DOM elements
-	const allBlocks: {
-		pos: number
-		node: Node
-		dom: HTMLElement
-		rect: DOMRect
-	}[] = []
-
-	gridNode.forEach((child: Node, childOffset: number) => {
-		const childPos = gridPos + 1 + childOffset // +1 for grid's opening tag
-		const childDOM = view.nodeDOM(childPos)
-
-		if (childDOM && childDOM instanceof HTMLElement) {
-			allBlocks.push({
-				pos: childPos,
-				node: child,
-				dom: childDOM,
-				rect: childDOM.getBoundingClientRect(),
-			})
-		}
-	})
+	const rows = metricGridRows(view, gridNode, gridPos)
+	const allBlocks = rows.flat()
 
 	if (allBlocks.length === 0) {
 		// Empty grid - return position at start of grid content
 		return gridPos + 1
 	}
 
-	// Group blocks by row based on their vertical position
-	// Blocks are on the same row if their vertical centers are within tolerance
-	const ROW_TOLERANCE = 10
-	const rows: (typeof allBlocks)[] = []
-
-	for (const block of allBlocks) {
-		const blockCenterY = block.rect.top + block.rect.height / 2
-
-		// Find existing row that this block belongs to
-		let foundRow = false
-		for (const row of rows) {
-			const rowStart = row[0]
-			if (rowStart) {
-				const rowCenterY = rowStart.rect.top + rowStart.rect.height / 2
-				if (Math.abs(blockCenterY - rowCenterY) < ROW_TOLERANCE) {
-					row.push(block)
-					foundRow = true
-					break
-				}
-			}
-		}
-
-		if (!foundRow) {
-			rows.push([block])
-		}
-	}
-
 	// Find which row the cursor is in based on clientY
-	let targetRow: typeof allBlocks | null = null
+	let targetRow: MetricGridBlock[] | null = null
 
 	for (const row of rows) {
 		if (row.length === 0) continue
@@ -292,6 +254,15 @@ function findMetricGridDropPosition(
 		return null
 	}
 
+	// a stacked grid, as on a phone, lays its blocks out top to bottom, so
+	// the cursor's height picks before or after
+	if (isStackedMetricGrid(rows)) {
+		const midpointY = firstBlock.rect.top + firstBlock.rect.height / 2
+		return clientY < midpointY
+			? firstBlock.pos
+			: firstBlock.pos + firstBlock.node.nodeSize
+	}
+
 	// Check if cursor is in the left margin (before the first block of this row)
 	if (clientX < firstBlock.rect.left) {
 		return firstBlock.pos
@@ -330,6 +301,55 @@ function findMetricGridDropPosition(
 
 	// Fallback: return position after the last block
 	return lastBlock.pos + lastBlock.node.nodeSize
+}
+
+// metricGridRows groups a grid's blocks into the rows they are laid out
+// in. Blocks share a row when their vertical centers are close.
+function metricGridRows(
+	view: EditorView,
+	gridNode: Node,
+	gridPos: number,
+): MetricGridBlock[][] {
+	const ROW_TOLERANCE = 10
+	const rows: MetricGridBlock[][] = []
+
+	gridNode.forEach((child: Node, childOffset: number) => {
+		const childPos = gridPos + 1 + childOffset // +1 for grid's opening tag
+		const childDOM = view.nodeDOM(childPos)
+		if (!(childDOM instanceof HTMLElement)) {
+			return
+		}
+
+		const block = {
+			pos: childPos,
+			node: child,
+			dom: childDOM,
+			rect: childDOM.getBoundingClientRect(),
+		}
+		const centerY = block.rect.top + block.rect.height / 2
+		const row = rows.find((candidate) => {
+			const first = candidate[0]
+
+			return (
+				!!first &&
+				Math.abs(centerY - (first.rect.top + first.rect.height / 2)) <
+					ROW_TOLERANCE
+			)
+		})
+
+		if (row) {
+			row.push(block)
+		} else {
+			rows.push([block])
+		}
+	})
+
+	return rows
+}
+
+// a grid too narrow for two blocks side by side stacks them one per row
+function isStackedMetricGrid(rows: MetricGridBlock[][]): boolean {
+	return rows.length > 1 && rows.every((row) => row.length === 1)
 }
 
 // Find the appropriate insert position respecting nesting ("snaps" to either
@@ -479,6 +499,29 @@ function findDropPosition(
 
 	const { state } = view
 	const $pos = state.doc.resolve(coords.pos)
+
+	// an atom block in the container the drag started from, such as a
+	// chart in a split documentation's right side, is a target of its own:
+	// the cursor's height over it picks before or after. The search below
+	// would climb past the container, which the check further down then
+	// refuses.
+	const atom = coords.inside >= 0 ? state.doc.nodeAt(coords.inside) : null
+	if (atom?.isAtom && sourceContainerStart !== null) {
+		const $atom = state.doc.resolve(coords.inside)
+		const atomDOM = view.nodeDOM(coords.inside)
+
+		if (
+			$atom.depth > 0 &&
+			$atom.before() === sourceContainerStart &&
+			atomDOM instanceof HTMLElement
+		) {
+			const rect = atomDOM.getBoundingClientRect()
+
+			return clientY < rect.top + rect.height / 2
+				? coords.inside
+				: coords.inside + atom.nodeSize
+		}
+	}
 
 	// Find the deepest composite node (e.g., innermost ListItem for nested lists),
 	// or the deepest draggable node if no composite node is found.
@@ -979,10 +1022,13 @@ function showCursorAt(view: EditorView, pos: number, clientY?: number) {
 	const $pos = view.state.doc.resolve(pos)
 	const isAfterLastChild = $pos.index($pos.depth) === $pos.parent.childCount
 
-	// Check if this position is inside a MetricGrid - if so, render vertical cursor
-	const isInsideMetricGrid = $pos.parent.type.name === MetricGrid.name
+	// a position between side-by-side metric blocks takes a vertical cursor.
+	// A stacked grid drops above or below its blocks, like any other block.
+	const betweenSideBySideBlocks =
+		$pos.parent.type.name === MetricGrid.name &&
+		!isStackedMetricGrid(metricGridRows(view, $pos.parent, $pos.before()))
 
-	if (isInsideMetricGrid) {
+	if (betweenSideBySideBlocks) {
 		// Render vertical cursor for MetricGrid
 		showVerticalCursorAt(view, pos, $pos, editorRect, clientY)
 		return
@@ -1463,7 +1509,9 @@ export const Drag = Extension.create<DragOptions>({
 						)
 
 						e.preventDefault()
-						return executed
+						// a moved block that lands on itself moves nothing. Left to
+						// prosemirror, the drop would still delete and reinsert it.
+						return executed || moved
 					},
 					transformPasted(slice) {
 						lastSlice = slice
