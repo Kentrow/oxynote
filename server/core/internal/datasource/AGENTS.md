@@ -37,12 +37,14 @@ sources.
   connections serve every call. `Runner` hands out a runner it does not
   keep yet when `updatedAt` differs; the first query through it is what
   replaces the kept one (`adopt`), so testing an edit never closes the
-  connections readers use. The update and delete handlers evict, and five
-  idle minutes close a runner.
+  connections readers use. The update and delete handlers evict, as does
+  a test that changes the stored status; five idle minutes close a runner.
 - Calls wait on one connection test per data source. A pass holds for
-  10s. A failure drops the runner: the calls already waiting get it, and
-  the next call tests again. `runner.TestConnection` always tests through
-  a throwaway processor.
+  10s, a failure for 30s: each test of a broken source is a failed login.
+  A failure also hands the runner's place to a fresh one that remembers
+  it (`renew`), because a pooled session keeps the role settings it
+  started with. `runner.TestConnection` always tests through a throwaway
+  processor.
 - Read-only is checked, never enforced: the connection test refuses an
   account that is not read-only (Postgres role, database or standby;
   MySQL grants). Queries run in no transaction and sessions are not reset,

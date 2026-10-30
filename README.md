@@ -136,8 +136,8 @@ from a real domain to an external PostgreSQL. To run from source, see
 
 Oxynote keeps the pages about your systems, such as architecture notes, API
 references, on-call steps and release checklists, in one page tree. Those
-pages can query Prometheus, PostgreSQL, MySQL or MariaDB, so the live
-metrics sit right where you write about them.
+pages can query Prometheus, PostgreSQL, Supabase, MySQL or MariaDB, so the
+live metrics sit right where you write about them.
 
 ### Live Metric Charts
 

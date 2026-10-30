@@ -30,6 +30,12 @@ const (
 	// source before a call tests it again.
 	_statusTTL = 10 * time.Second
 
+	// _failureTTL is how long a failed connection test answers for a data
+	// source before a call tests it again. Each test of a misconfigured
+	// data source is a failed login, and some servers block an address
+	// after a few of them.
+	_failureTTL = 30 * time.Second
+
 	// _idleAfter is how long a runner may go unasked for before its
 	// connections are closed.
 	_idleAfter = 5 * time.Minute
@@ -207,9 +213,12 @@ func (m *Manager) Evict(id xid.ID) {
 	}
 }
 
-// drop closes the connections of a runner whose connection test failed.
-// A runner already replaced had them closed then.
-func (m *Manager) drop(r *runner) {
+// renew replaces r, whose connection test failed, with a runner of the same
+// data source that remembers the failure, and closes the connections of r.
+// A session keeps the settings it started with, so a test on them would
+// keep failing after the data source is fixed. A runner the manager already
+// let go is left as it is.
+func (m *Manager) renew(r *runner) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -217,7 +226,17 @@ func (m *Manager) drop(r *runner) {
 		return
 	}
 
-	delete(m.runners, r.ds.ID)
+	nr := &runner{
+		m:        m,
+		ds:       r.ds,
+		status:   r.status,
+		usedAt:   r.usedAt,
+		testedAt: r.testedAt,
+		tested:   r.tested,
+	}
+	nr.client, nr.clientErr = m.newClient(r.ds)
+
+	m.runners[r.ds.ID] = nr
 	m.release(r)
 }
 
@@ -274,6 +293,8 @@ func (m *Manager) newClient(ds DataSource) (ownedClient, error) {
 		return m.prometheusClient(ds)
 	case TypePostgreSQL:
 		return processor.NewPostgreSQL(newStateInput(ds.URL, ds.Credentials)), nil
+	case TypeSupabase:
+		return processor.NewSupabase(newStateInput(ds.URL, ds.Credentials)), nil
 	case TypeMariaDB, TypeMySQL:
 		return processor.NewMySQL(newStateInput(ds.URL, ds.Credentials)), nil
 	case TypeLoki:
@@ -390,7 +411,7 @@ func (r *runner) Prometheus(ctx context.Context) (Prometheus, error) {
 // PostgreSQL returns the data source's PostgreSQL client, whose queries are
 // answered out of the query cache.
 func (r *runner) PostgreSQL(ctx context.Context) (PostgreSQL, error) {
-	client, err := connect[PostgreSQL](ctx, r, TypePostgreSQL)
+	client, err := connect[PostgreSQL](ctx, r, TypePostgreSQL, TypeSupabase)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +432,7 @@ func (r *runner) MySQL(ctx context.Context) (MySQL, error) {
 
 // SQL returns the data source's dialect-agnostic SQL client.
 func (r *runner) SQL(ctx context.Context) (SQL, error) {
-	return connect[SQL](ctx, r, TypePostgreSQL, TypeMariaDB, TypeMySQL)
+	return connect[SQL](ctx, r, TypePostgreSQL, TypeSupabase, TypeMariaDB, TypeMySQL)
 }
 
 // Logs returns the data source's log client, whose reads are answered out
@@ -474,8 +495,10 @@ func connect[C any](ctx context.Context, r *runner, allowed ...Type) (C, error) 
 }
 
 // ensureTested tests the connection unless it passed a test within
-// _statusTTL, and records what it found. A failing test drops the runner,
-// so the next call starts over with new connections and a new test.
+// _statusTTL or failed one within _failureTTL, and records what it found.
+// A failing test renews the runner. The new one remembers the failure, so
+// it answers the calls that follow without a new login, and its next test
+// opens new connections.
 //
 // One call at a time tests a data source, and the calls waiting behind it
 // reuse what it found, a failure included. A document opening many charts
@@ -487,10 +510,15 @@ func (r *runner) ensureTested(ctx context.Context) error {
 	}
 	defer unlock()
 
-	fresh := timeutil.Now().Sub(r.testedAt) < _statusTTL
+	ttl := _statusTTL
+	if r.tested.Error() != nil {
+		ttl = _failureTTL
+	}
 
-	// the calls that waited behind a failing test hold the runner it
-	// dropped, and the failure is their answer.
+	fresh := timeutil.Now().Sub(r.testedAt) < ttl
+
+	// a recent failure answers every call, the ones holding a runner the
+	// manager let go since included.
 	if fresh {
 		if serr := r.tested.Error(); serr != nil {
 			return serr
@@ -527,7 +555,7 @@ func (r *runner) ensureTested(ctx context.Context) error {
 	r.tested = cs
 
 	if serr := cs.Error(); serr != nil {
-		r.m.drop(r)
+		r.m.renew(r)
 
 		return serr
 	}
