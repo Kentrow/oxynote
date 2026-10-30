@@ -883,5 +883,37 @@ describe("useDataSourceAPI", { concurrent: false }, () => {
 			})
 			expect(listCalls).toHaveLength(0)
 		})
+
+		it("keeps the answers for different chart types apart", async ({
+			expect,
+		}) => {
+			seedQueryData(LIST_KEY, [])
+			const listCalls = mockEndpoint("GET", LIST_URL, () => [])
+			const queryCalls = mockEndpoint("GET", QUERY_URL, () =>
+				makeQueryResult(1),
+			)
+			const params = ref({
+				...makeMultiQueryParams(),
+				chartType: GenericQueryChartType.Gauge,
+			})
+			const api = makeDataSourceAPI()
+			const queries = runInApp(() =>
+				api.useMultipleGenericQueries(DS_ID, params, false),
+			)
+			await queries.refresh()
+
+			params.value = { ...params.value, chartType: GenericQueryChartType.Line }
+			await queries.refresh()
+
+			// a fresh answer per chart type, each asked for that type
+			expect(queryCalls).toHaveLength(4)
+			expect(queryCalls[2]?.query).toEqual({
+				q: "up",
+				chartType: "line_chart",
+				from: "2026-01-01T00:00:00.000Z",
+				to: "2026-01-02T00:00:00.000Z",
+			})
+			expect(listCalls).toHaveLength(0)
+		})
 	})
 })
