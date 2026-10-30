@@ -155,6 +155,10 @@ cheaper tier can:
   buttons, copy, component branches. Those are `web/` component tests.
 - **The test: would this still fail if the backend were a mock?** If yes,
   it belongs one tier down. Coverage here is by flow, not by branch.
+- **Touch gestures belong here too**, the one exception to that test: only
+  a real browser produces the pointer, compat mouse and click sequence a
+  finger makes. They run in a touch context (`hasTouch`, `isMobile`) and
+  drive the finger through CDP touch events (`holdBlock()`).
 - **A negative case belongs here when the server decides it**: "user A
   cannot open user B's document" is answered by core alone. Access denials
   are grouped in `tests/access.test.ts`, since a feature test always runs

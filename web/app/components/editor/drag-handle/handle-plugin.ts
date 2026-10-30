@@ -28,6 +28,8 @@ import {
 import { Fragment, Slice } from "@tiptap/pm/model"
 import type { HocuspocusProvider } from "@hocuspocus/provider"
 import { findDraggableNodeAtCoords } from "./node-detection.js"
+import { bindTouchLongPress, MOVE_THRESHOLD } from "../long-press"
+import { startTouchDrag, type TouchDrag } from "./touch-drag"
 import type { DragHandleDragging } from "./drag"
 import { enableGapZones, disableGapZones } from "./gap-decorations"
 import {
@@ -230,9 +232,14 @@ function findSourceWrapperBounds(
 	return null
 }
 
-// handleDragData renders a drag image and sets up the drag event for
-// dragging nodes.
-function handleDragData(event: DragEvent, editor: Editor, nodePos: number) {
+// handleDragData sets up the drag event for dragging nodes, and renders a
+// drag image when asked.
+function handleDragData(
+	event: DragEvent,
+	editor: Editor,
+	nodePos: number,
+	withDragImage: boolean,
+) {
 	const { view } = editor
 
 	if (!event.dataTransfer) {
@@ -280,22 +287,32 @@ function handleDragData(event: DragEvent, editor: Editor, nodePos: number) {
 		tr.setSelection(selection)
 	}
 
-	const wrapper = document.createElement("div")
-
-	ranges.forEach((range) => {
-		const element = view.nodeDOM(range.$from.pos) as HTMLElement | null
-		if (element) {
-			const clonedElement = cloneElement(element)
-			wrapper.append(clonedElement)
-		}
-	})
-
-	wrapper.style.position = "absolute"
-	wrapper.style.top = "-10000px"
-	document.body.append(wrapper)
-
 	event.dataTransfer.clearData()
-	event.dataTransfer.setDragImage(wrapper, 0, 0)
+
+	if (withDragImage) {
+		const wrapper = document.createElement("div")
+
+		ranges.forEach((range) => {
+			const element = view.nodeDOM(range.$from.pos) as HTMLElement | null
+			if (element) {
+				const clonedElement = cloneElement(element)
+				wrapper.append(clonedElement)
+			}
+		})
+
+		wrapper.style.position = "absolute"
+		wrapper.style.top = "-10000px"
+		document.body.append(wrapper)
+		event.dataTransfer.setDragImage(wrapper, 0, 0)
+
+		document.addEventListener(
+			"drop",
+			() => {
+				removeNode(wrapper)
+			},
+			{ once: true },
+		)
+	}
 
 	// Find the parent list type if dragging a list item
 	const parentListType = findParentListType(doc, nodePos, node)
@@ -314,14 +331,6 @@ function handleDragData(event: DragEvent, editor: Editor, nodePos: number) {
 	}
 	view.dragging = dragging
 	view.dispatch(tr)
-
-	document.addEventListener(
-		"drop",
-		() => {
-			removeNode(wrapper)
-		},
-		{ once: true },
-	)
 }
 
 export interface DragHandlePluginProps {
@@ -335,6 +344,12 @@ export interface DragHandlePluginProps {
 		pos: number
 		depth: number
 	}) => void
+	// a touch hold began on a node
+	onNodeHold?: () => void
+	// the hold ended in place, which opens the node's menu
+	onNodeLongPress?: () => void
+	// the hold ended without a menu: it became a drag or the touch was cancelled
+	onNodeHoldEnd?: () => void
 	onElementDragStart?: (e: DragEvent) => void
 	onElementDragEnd?: (e: DragEvent) => void
 	onDragCancel?: () => void
@@ -362,6 +377,9 @@ export const DragHandlePlugin = ({
 	provider,
 	getReferencedVirtualElement,
 	onNodeChange,
+	onNodeHold,
+	onNodeLongPress,
+	onNodeHoldEnd,
 	onElementDragStart,
 	onElementDragEnd,
 	onDragCancel,
@@ -377,6 +395,15 @@ export const DragHandlePlugin = ({
 	// pointer is followed on the document to know where it is once the
 	// menu has closed
 	let lastMouseCoords: { x: number; y: number } | null = null
+	// the touch hold on a node, from the moment it opens until the finger
+	// lifts. A held finger gets one try at a drag.
+	let hold: {
+		x: number
+		y: number
+		placed: Promise<void>
+		dragTried: boolean
+	} | null = null
+	let touchDrag: TouchDrag | null = null
 	let draggingNodeUid: string | null = null // tracks the UID of the node currently being dragged
 
 	// resolve the plugin key once for use throughout the plugin
@@ -439,7 +466,7 @@ export const DragHandlePlugin = ({
 		}
 		const config = handlePositionByNodeType(editor, currentNodePos)
 
-		void computePosition(virtualElement, element, config).then((val) => {
+		return computePosition(virtualElement, element, config).then((val) => {
 			Object.assign(element.style, {
 				position: val.strategy,
 				left: `${val.x + config.xOffset}px`,
@@ -449,7 +476,8 @@ export const DragHandlePlugin = ({
 	}
 
 	function onDragStart(e: DragEvent) {
-		if (currentNodePos === -1) {
+		// a listener before this one refused the drag, as read mode does
+		if (e.defaultPrevented || currentNodePos === -1) {
 			return
 		}
 
@@ -472,7 +500,9 @@ export const DragHandlePlugin = ({
 		}
 
 		onElementDragStart?.(e)
-		handleDragData(e, editor, currentNodePos)
+		// a drag that starts during a touch hold is the touch drag. It shows
+		// its own preview, and a script DataTransfer shows no drag image.
+		handleDragData(e, editor, currentNodePos, hold === null)
 
 		// Broadcast that we're dragging this node
 		if (nodeUid) {
@@ -528,12 +558,20 @@ export const DragHandlePlugin = ({
 		onElementDragEnd?.(e)
 		disableGapZones()
 		clearDragAwareness()
+		// prosemirror clears the drag only for a drop it handled itself, and a
+		// drag left behind refuses every later touch hold
+		editor.view.dragging = null
 
 		element.style.pointerEvents = "auto"
 
-		// redetect which node is under the cursor after the drop completes
+		// redetect which node is under the cursor after the drop completes.
+		// A drag cut short by unmounting the editor finds no view by then.
 		setTimeout(() => {
-			retargetHandle(e.clientX, e.clientY)
+			if (editor.isDestroyed) {
+				return
+			}
+
+			void retargetHandle(e.clientX, e.clientY)
 		}, 10)
 	}
 
@@ -547,12 +585,13 @@ export const DragHandlePlugin = ({
 	}
 
 	// retargetHandle moves the handle to the node under the given point,
-	// or takes it away when none is there
+	// or takes it away when none is there. It returns the move, which ends
+	// once the handle is in place, or null when there was no node.
 	function retargetHandle(x: number, y: number) {
 		const result = findDraggableNodeAtCoords(editor, x, y)
 		if (!result) {
 			forgetNode()
-			return
+			return null
 		}
 
 		if (result.pos !== currentNodePos) {
@@ -569,8 +608,9 @@ export const DragHandlePlugin = ({
 			pos: currentNodePos,
 			depth: result.depth,
 		})
-		repositionDragHandle(result.dom, currentNodePos)
+		const placed = repositionDragHandle(result.dom, currentNodePos)
 		showHandle()
+		return placed
 	}
 
 	// the lock kept the handle on its node whatever the pointer did, so
@@ -588,7 +628,7 @@ export const DragHandlePlugin = ({
 		}
 
 		if (editor.view.dom.contains(target)) {
-			retargetHandle(x, y)
+			void retargetHandle(x, y)
 			return
 		}
 
@@ -742,6 +782,99 @@ export const DragHandlePlugin = ({
 				},
 			},
 			view: (view) => {
+				// each view ends the binding it made: prosemirror can create a
+				// second view of this plugin before it destroys the first
+				const stopLongPress = bindTouchLongPress(view.dom, {
+					onHold(event) {
+						if (locked || view.dragging || !onNodeLongPress) {
+							return false
+						}
+
+						const placed = retargetHandle(event.clientX, event.clientY)
+						if (!placed) {
+							return false
+						}
+
+						lastMouseCoords = null
+						hold = {
+							x: event.clientX,
+							y: event.clientY,
+							placed,
+							dragTried: false,
+						}
+						onNodeHold?.()
+						return true
+					},
+					onHoldMove(event) {
+						if (touchDrag) {
+							touchDrag.move(event)
+							return
+						}
+
+						// a script dragstart ignores draggable, which is what keeps
+						// a mouse from dragging in an editor that cannot be edited
+						if (
+							!hold ||
+							hold.dragTried ||
+							!editor.isEditable ||
+							Math.hypot(event.clientX - hold.x, event.clientY - hold.y) <
+								MOVE_THRESHOLD
+						) {
+							return
+						}
+
+						// a refused drag, as in read mode, leaves the release to
+						// open the menu
+						hold.dragTried = true
+						const block = view.nodeDOM(currentNodePos)
+						if (!(block instanceof HTMLElement)) {
+							return
+						}
+
+						touchDrag = startTouchDrag(
+							element,
+							block,
+							() => cloneElement(block),
+							hold,
+							currentNode && LIST_ITEM_TYPES.has(currentNode.type.name)
+								? {
+										// the item's first paragraph starts two positions in
+										textLeft: view.coordsAtPos(currentNodePos + 2).left,
+										editorLeft: view.dom.getBoundingClientRect().left,
+									}
+								: null,
+						)
+						if (touchDrag) {
+							onNodeHoldEnd?.()
+							touchDrag.move(event)
+						}
+					},
+					onHoldEnd(event) {
+						const ended = hold
+						hold = null
+
+						if (touchDrag) {
+							if (event.type === "pointerup") {
+								touchDrag.drop(event)
+							} else {
+								touchDrag.cancel()
+							}
+
+							touchDrag = null
+							return
+						}
+
+						if (event.type !== "pointerup") {
+							onNodeHoldEnd?.()
+							return
+						}
+
+						// the menu anchors to the handle, so it opens once the
+						// handle has reached the held block
+						void ended?.placed.then(onNodeLongPress)
+					},
+				})
+
 				element.draggable = editor.isEditable
 				element.style.pointerEvents = "auto"
 
@@ -783,10 +916,20 @@ export const DragHandlePlugin = ({
 						// positions slightly. The node detection only happens on mousemove.
 						const dom = view.nodeDOM(currentNodePos) as HTMLElement | null
 						if (dom?.nodeType === 1) {
-							repositionDragHandle(dom, currentNodePos)
+							void repositionDragHandle(dom, currentNodePos)
 						}
 					},
 					destroy() {
+						stopLongPress()
+
+						if (touchDrag) {
+							touchDrag.cancel()
+							touchDrag = null
+						} else if (hold) {
+							onNodeHoldEnd?.()
+						}
+
+						hold = null
 						document.removeEventListener("mousemove", trackMouse)
 
 						// clear awareness if we were mid-drag
@@ -881,7 +1024,7 @@ export const DragHandlePlugin = ({
 									pos: currentNodePos,
 									depth: depth,
 								})
-								repositionDragHandle(domNode, currentNodePos)
+								void repositionDragHandle(domNode, currentNodePos)
 								showHandle()
 							}
 						})

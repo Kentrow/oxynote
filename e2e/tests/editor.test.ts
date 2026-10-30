@@ -5,6 +5,7 @@ import {
 	createDocument,
 	documentPersisted,
 	editorText,
+	holdBlock,
 	openBlockMenu,
 	openDocumentActions,
 	openSlashMenu,
@@ -448,5 +449,78 @@ test.describe("editor", () => {
 
 		await expect(page).toHaveURL(link.href.replace(link.hash, ""))
 		await expect(highlight).toHaveCount(0)
+	})
+
+	test.describe("on a touch screen", () => {
+		// the sidebar that creates a page folds away on a phone, so each test
+		// sets its page up at the default size and then narrows to a phone
+		const PHONE = { width: 390, height: 844 }
+
+		test.use({ hasTouch: true, isMobile: true })
+
+		test("opens a block's menu once a hold is released, without showing the handle", async ({
+			page,
+			request,
+		}) => {
+			await signUpWithWorkspace(page, request)
+			await createDocument(page)
+			await page.setViewportSize(PHONE)
+			await contentEditor(page).tap()
+			await page.keyboard.type("Held")
+			const block = contentEditor(page).getByText("Held", { exact: true })
+
+			const finger = await holdBlock(page, block)
+			await expect(page.getByRole("menu")).toHaveCount(0)
+			await finger.lift()
+
+			// the release opens the menu, and picks none of its items even
+			// where the menu opens under the finger
+			await expect(page.getByRole("menu")).toBeVisible()
+			await expect(
+				page.getByRole("menuitem", {
+					name: t("editor.drag-handle.options.copy-link"),
+				}),
+			).toBeVisible()
+			await expect(
+				contentPane(page).locator(".z-drag-handle:not([inert])"),
+			).toHaveCSS("opacity", "0")
+			await expect.poll(() => editorText(contentEditor(page))).toBe("Held")
+		})
+
+		test("moves a block by holding it and dragging it below the next one", async ({
+			page,
+			request,
+		}) => {
+			await signUpWithWorkspace(page, request)
+			await createDocument(page)
+			await page.setViewportSize(PHONE)
+			await contentEditor(page).tap()
+			await page.keyboard.type("First")
+			await page.keyboard.press("Enter")
+			await page.keyboard.type("Second")
+			const first = contentEditor(page).getByText("First", { exact: true })
+			const second = contentEditor(page).getByText("Second", { exact: true })
+			const held = await first.boundingBox()
+			const target = await second.boundingBox()
+			expect(held).not.toBeNull()
+			expect(target).not.toBeNull()
+			const finger = await holdBlock(page, first)
+
+			// straight down from where the finger holds the block, since how
+			// far left a drag goes picks the level it drops into
+			await finger.move(
+				(held?.x ?? 0) + (held?.width ?? 0) / 2,
+				(target?.y ?? 0) + (target?.height ?? 0) - 2,
+			)
+			await finger.lift()
+
+			await expect
+				.poll(() => editorText(contentEditor(page)))
+				.toBe("SecondFirst")
+			await expect(page.getByRole("menu")).toHaveCount(0)
+			// the hold kept pointer events from the editor, and it takes the next
+			// touch again once the drag is over
+			await expect(contentEditor(page)).toHaveCSS("pointer-events", "auto")
+		})
 	})
 })

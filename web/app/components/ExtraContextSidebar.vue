@@ -17,6 +17,7 @@ defineSlots<{
 const { open: sidebarOpen, state: sidebarState } = useSidebar()
 const { width: sidebarWidth } = useSidebarWidth()
 const isMobile = useMediaQuery("(max-width: 1250px)") // match SidebarProvider (needs to fit maintainers/reviewers and other name editor things)
+const mounted = useMounted()
 
 // the panel stays beside the sidebar while closed, so it slides shut from
 // where it was instead of jumping under the sidebar first
@@ -50,11 +51,18 @@ function close() {
 			</div>
 		</ShadcnUiSheetContent>
 	</ShadcnUiSheet>
+	<!--
+		the server renders this column on any screen, and a narrow one swaps in
+		the sheet only once the page runs, so the column hides below the same
+		breakpoint (1250px) until then. A rem breakpoint follows the browser's
+		font size and the switch above does not, so it stops once mounted.
+	-->
 	<div
 		v-else
 		:class="
 			cn(
 				'grid transition-[grid-template-columns] duration-200 ease-out',
+				!mounted && 'max-[78.125rem]:hidden',
 				open && sidebarOpen
 					? 'grid-cols-[clamp(20rem,22dvw,26.25rem)]'
 					: 'grid-cols-[0rem]',

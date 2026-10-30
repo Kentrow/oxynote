@@ -11,6 +11,7 @@ import type * as Y from "yjs"
 import type { HocuspocusProvider } from "@hocuspocus/provider"
 import { type Editor, Extension } from "@tiptap/core"
 import IconPicker from "./IconPicker.vue"
+import { bindTouchLongPress } from "./long-press"
 import DiffTitle from "./diff/DiffTitle.vue"
 import { defaultNamePlaceholder } from "./placeholder"
 import { renderCollaborationCaret } from "./collaboration"
@@ -103,8 +104,11 @@ const hookBarClass = computed(() =>
 		: null,
 )
 const hookMenuOpen = ref(false)
+// a finger holding the title, until it lifts and opens the hook menu
+const titleHeld = ref(false)
 const rootElem = useTemplateRef<HTMLElement>("name-editor-root")
 const nameLineElem = useTemplateRef<HTMLElement>("name-line")
+const titleAreaElem = useTemplateRef<HTMLElement>("title-area")
 const hookHandleElem = useTemplateRef<HTMLElement>("hook-handle")
 const hoveringNameLine = useElementHover(nameLineElem)
 const hoveringHookHandle = useElementHover(hookHandleElem)
@@ -260,12 +264,33 @@ onBeforeUnmount(() => {
 	}
 })
 
+watch(titleAreaElem, (element, _previous, onCleanup) => {
+	if (element) {
+		onCleanup(
+			bindTouchLongPress(element, {
+				onHold: () => {
+					titleHeld.value = true
+					return true
+				},
+				onHoldEnd: (event) => {
+					titleHeld.value = false
+
+					if (event.type === "pointerup") {
+						hookMenuOpen.value = true
+					}
+				},
+			}),
+		)
+	}
+})
+
 // the panel marks what the handle points at, so it follows the handle's
-// hover and outlasts it for as long as the menu it opened is up
+// hover and outlasts it for as long as the menu it opened is up. A touch
+// hold on the title shows it too.
 watch(
-	[hoveringHookHandle, keyboardFocusOnHookHandle, hookMenuOpen],
-	([hovering, focused, menuOpen]) => {
-		if (!hovering && !focused && !menuOpen) {
+	[hoveringHookHandle, keyboardFocusOnHookHandle, hookMenuOpen, titleHeld],
+	([hovering, focused, menuOpen, held]) => {
+		if (!hovering && !focused && !menuOpen && !held) {
 			hideHighlight()
 			return
 		}
@@ -431,7 +456,10 @@ async function executeReviewableAction() {
 			ref="name-line"
 			class="group/name-line relative flex flex-col-reverse items-start gap-2 before:absolute before:inset-y-0 before:right-full before:w-5 after:absolute after:inset-y-0 after:left-full after:w-5 sm:flex-row sm:justify-between lg:before:w-12.5 lg:after:w-12.5"
 		>
-			<div class="relative flex flex-1 items-start gap-2 text-foreground">
+			<div
+				ref="title-area"
+				class="relative flex flex-1 items-start gap-2 text-foreground"
+			>
 				<HookDiffMarker
 					v-if="titleHookChanges"
 					class="absolute top-1.25 right-full pr-0.5 lg:pr-1.75"
@@ -439,7 +467,7 @@ async function executeReviewableAction() {
 					:hook-status="hookStatus"
 					:lifted="hookHandleShown"
 				/>
-				<ShadcnUiDropdownMenu @update:open="(v: boolean) => (hookMenuOpen = v)">
+				<ShadcnUiDropdownMenu v-model:open="hookMenuOpen">
 					<ShadcnUiDropdownMenuTrigger as-child>
 						<button
 							ref="hook-handle"
@@ -454,6 +482,7 @@ async function executeReviewableAction() {
 									'focus-visible:pointer-events-auto focus-visible:opacity-100',
 									'data-menu-open:pointer-events-auto data-menu-open:opacity-100',
 									'data-hovering:pointer-events-auto data-hovering:opacity-100',
+									'[@media(hover:none)]:pointer-events-none! [@media(hover:none)]:opacity-0!',
 								)
 							"
 						>
@@ -497,7 +526,12 @@ async function executeReviewableAction() {
 							</span>
 						</button>
 					</ShadcnUiDropdownMenuTrigger>
-					<ShadcnUiDropdownMenuContent side="right" align="start" loop>
+					<ShadcnUiDropdownMenuContent
+						class="select-none"
+						side="right"
+						align="start"
+						loop
+					>
 						<HooksMenuContent
 							:active-branch-hooks="activeBranchHooks"
 							:target-branch-hooks="props.targetBranchHooks"
@@ -507,6 +541,7 @@ async function executeReviewableAction() {
 					</ShadcnUiDropdownMenuContent>
 				</ShadcnUiDropdownMenu>
 				<IconPicker
+					data-hold-opens-menu
 					:icon="activeBranchIcon"
 					:is-modified="
 						targetBranchIcon !== null &&

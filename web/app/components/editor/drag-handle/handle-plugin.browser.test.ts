@@ -1,11 +1,11 @@
-import { computePosition } from "@floating-ui/dom"
+import { type ComputePositionReturn, computePosition } from "@floating-ui/dom"
 import type { JSONContent } from "@tiptap/core"
 import { Editor, Node as TiptapNode } from "@tiptap/core"
 import Document from "@tiptap/extension-document"
 import { BulletList, ListItem, OrderedList } from "@tiptap/extension-list"
 import Paragraph from "@tiptap/extension-paragraph"
 import Text from "@tiptap/extension-text"
-import type { Node as PMNode } from "@tiptap/pm/model"
+import { type Node as PMNode, Slice } from "@tiptap/pm/model"
 import type { Plugin } from "@tiptap/pm/state"
 import { NodeSelection, PluginKey } from "@tiptap/pm/state"
 import type { EditorView } from "@tiptap/pm/view"
@@ -23,7 +23,7 @@ import { disableGapZones, enableGapZones } from "./gap-decorations"
 import { findDraggableNodeAtCoords } from "./node-detection.js"
 import { METRIC_BLOCK_NAME, METRIC_GRID_NAME } from "../blocks/node-names"
 import { CLONE_IGNORE_ATTR } from "~/utils/object"
-import { paragraph } from "~/components/editor/test-helpers"
+import { paragraph, touchPointer } from "~/components/editor/test-helpers"
 
 vi.mock("./gap-decorations", () => ({
 	enableGapZones: vi.fn(),
@@ -213,12 +213,16 @@ describe("DragHandlePlugin", { concurrent: false }, () => {
 		pluginKey?: PluginKey | string
 		getReferencedVirtualElement?: () => { getBoundingClientRect: () => DOMRect }
 		register?: boolean
+		longPress?: boolean
 	}
 
 	function setup(opts: SetupOptions = {}) {
 		const editor = opts.editor ?? mountEditor(opts.content)
 		const element = document.createElement("div")
 		const onNodeChange = vi.fn()
+		const onNodeHold = vi.fn()
+		const onNodeLongPress = vi.fn()
+		const onNodeHoldEnd = vi.fn()
 		const onElementDragStart = vi.fn()
 		const onElementDragEnd = vi.fn()
 		const onDragCancel = vi.fn()
@@ -231,6 +235,9 @@ describe("DragHandlePlugin", { concurrent: false }, () => {
 			locked: opts.locked,
 			getReferencedVirtualElement: opts.getReferencedVirtualElement,
 			onNodeChange,
+			onNodeHold,
+			onNodeLongPress: opts.longPress === false ? undefined : onNodeLongPress,
+			onNodeHoldEnd,
 			onElementDragStart,
 			onElementDragEnd,
 			onDragCancel,
@@ -245,6 +252,9 @@ describe("DragHandlePlugin", { concurrent: false }, () => {
 			element,
 			handle,
 			onNodeChange,
+			onNodeHold,
+			onNodeLongPress,
+			onNodeHoldEnd,
 			onElementDragStart,
 			onElementDragEnd,
 			onDragCancel,
@@ -431,6 +441,348 @@ describe("DragHandlePlugin", { concurrent: false }, () => {
 				handle.unbind()
 			}).not.toThrow()
 		})
+	})
+
+	describe("touch long press", { concurrent: false }, () => {
+		it("highlights the held block without opening its menu or starting a drag", async ({
+			expect,
+		}) => {
+			const {
+				editor,
+				element,
+				onNodeChange,
+				onNodeHold,
+				onNodeLongPress,
+				onNodeHoldEnd,
+				onElementDragStart,
+			} = setup({ content: [paragraph("one"), paragraph("two")] })
+			const pos = must(editor.state.doc.firstChild, "first paragraph").nodeSize
+			const node = must(editor.state.doc.nodeAt(pos), "second paragraph")
+			const dom = editor.view.nodeDOM(pos) as HTMLElement
+			vi.mocked(findDraggableNodeAtCoords).mockReturnValue({
+				node,
+				pos,
+				depth: 1,
+				dom,
+			})
+
+			touchDown(dom, 20, 30)
+			await vi.advanceTimersByTimeAsync(300)
+
+			expect
+				.soft(onNodeChange)
+				.toHaveBeenCalledExactlyOnceWith({ editor, node, pos, depth: 1 })
+			expect.soft(onNodeHold).toHaveBeenCalledTimes(1)
+			expect
+				.soft(onNodeChange.mock.invocationCallOrder[0])
+				.toBeLessThan(
+					must(onNodeHold.mock.invocationCallOrder[0], "hold callback order"),
+				)
+			expect
+				.soft(findDraggableNodeAtCoords)
+				.toHaveBeenCalledExactlyOnceWith(editor, 20, 30)
+			expect.soft(onNodeLongPress).not.toHaveBeenCalled()
+			expect.soft(onNodeHoldEnd).not.toHaveBeenCalled()
+			expect.soft(element.style.visibility).toBe("")
+			expect.soft(onElementDragStart).not.toHaveBeenCalled()
+			expect.soft(editor.view.dragging).toBeNull()
+		})
+
+		it("opens the menu when the held finger lifts in place", async ({
+			expect,
+		}) => {
+			const { editor, onNodeLongPress, onNodeHoldEnd, onElementDragStart } =
+				setup()
+			await holdFirstBlock(editor)
+
+			touchAt(document, "pointerup", 20, 30)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect.soft(onNodeLongPress).toHaveBeenCalledTimes(1)
+			expect.soft(onNodeHoldEnd).not.toHaveBeenCalled()
+			expect.soft(onElementDragStart).not.toHaveBeenCalled()
+		})
+
+		it("opens the menu only once the handle has reached the held block", async ({
+			expect,
+		}) => {
+			const { editor, element, onNodeLongPress } = setup()
+			let place: (value: ComputePositionReturn) => void = () => undefined
+			vi.mocked(computePosition).mockReturnValue(
+				new Promise((resolve) => {
+					place = resolve
+				}),
+			)
+			await holdFirstBlock(editor)
+			touchAt(document, "pointerup", 20, 30)
+			await vi.advanceTimersByTimeAsync(0)
+			expect(onNodeLongPress).not.toHaveBeenCalled()
+
+			place({
+				x: 100,
+				y: 200,
+				placement: "left-start",
+				strategy: "absolute",
+				middlewareData: {},
+			})
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect.soft(onNodeLongPress).toHaveBeenCalledTimes(1)
+			expect.soft(element.style.position).toBe("absolute")
+		})
+
+		it("drops the highlight without a menu when the touch is cancelled", async ({
+			expect,
+		}) => {
+			const { editor, onNodeLongPress, onNodeHoldEnd } = setup()
+			await holdFirstBlock(editor)
+
+			touchAt(document, "pointercancel", 20, 30)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect.soft(onNodeHoldEnd).toHaveBeenCalledTimes(1)
+			expect.soft(onNodeLongPress).not.toHaveBeenCalled()
+		})
+
+		it("leaves an open menu pinned when another block is held", async ({
+			expect,
+		}) => {
+			const { editor, onNodeHold } = setup({ locked: true })
+
+			touchDown(editor.view.dom)
+			await vi.advanceTimersByTimeAsync(300)
+
+			expect.soft(onNodeHold).not.toHaveBeenCalled()
+			expect.soft(findDraggableNodeAtCoords).not.toHaveBeenCalled()
+		})
+
+		it("ignores a hold while a drag is in progress", async ({ expect }) => {
+			const { editor, onNodeHold } = setup()
+			editor.view.dragging = { slice: Slice.empty, move: true }
+
+			touchDown(editor.view.dom)
+			await vi.advanceTimersByTimeAsync(300)
+
+			expect.soft(onNodeHold).not.toHaveBeenCalled()
+			expect.soft(findDraggableNodeAtCoords).not.toHaveBeenCalled()
+		})
+
+		it("ignores a hold when there is no menu to open", async ({ expect }) => {
+			const { editor, element, onNodeHold } = setup({ longPress: false })
+
+			touchDown(editor.view.dom)
+			await vi.advanceTimersByTimeAsync(300)
+
+			expect.soft(onNodeHold).not.toHaveBeenCalled()
+			expect.soft(findDraggableNodeAtCoords).not.toHaveBeenCalled()
+			expect.soft(element.style.visibility).toBe("hidden")
+		})
+
+		it("does not hold when the touch has no eligible block", async ({
+			expect,
+		}) => {
+			const { editor, element, onNodeHold } = setup()
+			vi.mocked(findDraggableNodeAtCoords).mockReturnValue(null)
+
+			touchDown(editor.view.dom)
+			await vi.advanceTimersByTimeAsync(300)
+
+			expect.soft(onNodeHold).not.toHaveBeenCalled()
+			expect.soft(element.style.visibility).toBe("hidden")
+		})
+
+		it("starts a touch drag once the held finger moves ten pixels", async ({
+			expect,
+		}) => {
+			const { editor, onElementDragStart, onNodeHoldEnd } = setup()
+			await holdFirstBlock(editor)
+
+			touchAt(document, "pointermove", 20, 40)
+
+			expect.soft(onElementDragStart).toHaveBeenCalledTimes(1)
+			expect.soft(enableGapZones).toHaveBeenCalledTimes(1)
+			expect.soft(onNodeHoldEnd).toHaveBeenCalledTimes(1)
+			expect.soft(editor.view.dragging).not.toBeNull()
+		})
+
+		it("keeps a shorter move of the held finger from dragging", async ({
+			expect,
+		}) => {
+			const { editor, onElementDragStart, onNodeHoldEnd } = setup()
+			await holdFirstBlock(editor)
+
+			touchAt(document, "pointermove", 20, 39)
+
+			expect.soft(onElementDragStart).not.toHaveBeenCalled()
+			expect.soft(onNodeHoldEnd).not.toHaveBeenCalled()
+			expect.soft(editor.view.dragging).toBeNull()
+		})
+
+		it.for([
+			{ name: "pointerup", expected: 1 },
+			{ name: "pointercancel", expected: 0 },
+		])(
+			"ends the touch drag on $name without a menu",
+			async ({ name, expected }, { expect }) => {
+				const { editor, onElementDragEnd, onNodeLongPress } = setup()
+				await holdFirstBlock(editor)
+				touchAt(document, "pointermove", 20, 40)
+				const onDrop = vi.fn()
+				document.addEventListener("drop", onDrop)
+				cleanups.push(() => {
+					document.removeEventListener("drop", onDrop)
+				})
+
+				touchAt(document, name, 20, 40)
+				await vi.advanceTimersByTimeAsync(0)
+
+				expect.soft(onElementDragEnd).toHaveBeenCalledTimes(1)
+				expect.soft(disableGapZones).toHaveBeenCalledTimes(1)
+				expect.soft(onDrop).toHaveBeenCalledTimes(expected)
+				expect.soft(onNodeLongPress).not.toHaveBeenCalled()
+			},
+		)
+
+		it.for(["pointerup", "pointercancel"])(
+			"lets another block be held after a touch drag ends on %s",
+			async (type, { expect }) => {
+				const { editor, onNodeHold } = setup()
+				await holdFirstBlock(editor)
+				touchAt(document, "pointermove", 20, 40)
+				touchAt(document, type, 20, 40)
+
+				await holdFirstBlock(editor)
+
+				expect.soft(onNodeHold).toHaveBeenCalledTimes(2)
+				expect.soft(editor.view.dragging).toBeNull()
+			},
+		)
+
+		it("leaves out the hidden drag image a mouse drag needs", async ({
+			expect,
+		}) => {
+			const { editor } = setup()
+			await holdFirstBlock(editor)
+
+			touchAt(document, "pointermove", 20, 40)
+
+			expect(
+				[...document.body.children].filter(
+					(child) => (child as HTMLElement).style.top === "-10000px",
+				),
+			).toHaveLength(0)
+		})
+
+		it("starts no touch drag in an editor that cannot be edited", async ({
+			expect,
+		}) => {
+			const { editor, onElementDragStart } = setup()
+			editor.setEditable(false)
+			await holdFirstBlock(editor)
+
+			touchAt(document, "pointermove", 20, 40)
+
+			expect.soft(onElementDragStart).not.toHaveBeenCalled()
+			expect.soft(editor.view.dragging).toBeNull()
+		})
+
+		it("tries a refused touch drag only once per hold", async ({ expect }) => {
+			const { editor, onElementDragStart } = setup()
+			const refuse = refuseDrags()
+			await holdFirstBlock(editor)
+			touchAt(document, "pointermove", 20, 40)
+
+			touchAt(document, "pointermove", 20, 60)
+
+			expect.soft(refuse).toHaveBeenCalledTimes(1)
+			expect.soft(onElementDragStart).not.toHaveBeenCalled()
+			expect.soft(editor.view.dragging).toBeNull()
+		})
+
+		it("opens the menu on release after a refused touch drag", async ({
+			expect,
+		}) => {
+			const { editor, onNodeLongPress, onNodeHoldEnd } = setup()
+			refuseDrags()
+			await holdFirstBlock(editor)
+			touchAt(document, "pointermove", 20, 40)
+
+			touchAt(document, "pointerup", 20, 40)
+			await vi.advanceTimersByTimeAsync(0)
+
+			expect.soft(onNodeLongPress).toHaveBeenCalledTimes(1)
+			expect.soft(onNodeHoldEnd).not.toHaveBeenCalled()
+		})
+
+		it("cancels a touch drag when the plugin is destroyed", async ({
+			expect,
+		}) => {
+			const pluginKey = new PluginKey("touchDragCleanup")
+			const { editor, onElementDragEnd } = setup({ pluginKey })
+			await holdFirstBlock(editor)
+			touchAt(document, "pointermove", 20, 40)
+
+			editor.unregisterPlugin(pluginKey)
+
+			expect.soft(onElementDragEnd).toHaveBeenCalledTimes(1)
+			expect.soft(disableGapZones).toHaveBeenCalledTimes(1)
+		})
+
+		it("drops the highlight when the plugin is destroyed during a hold", async ({
+			expect,
+		}) => {
+			const pluginKey = new PluginKey("holdCleanup")
+			const { editor, onNodeHoldEnd } = setup({ pluginKey })
+			await holdFirstBlock(editor)
+
+			editor.unregisterPlugin(pluginKey)
+
+			expect(onNodeHoldEnd).toHaveBeenCalledTimes(1)
+		})
+
+		it("ends the touch binding of every view it destroys", async ({
+			expect,
+		}) => {
+			const { editor, handle, onNodeHold } = setup({ register: false })
+			const first = must(handle.plugin.spec.view, "plugin view")(editor.view)
+			const second = must(handle.plugin.spec.view, "plugin view")(editor.view)
+
+			first.destroy?.()
+			second.destroy?.()
+			touchDown(editor.view.dom)
+			await vi.advanceTimersByTimeAsync(300)
+
+			expect.soft(onNodeHold).not.toHaveBeenCalled()
+			expect.soft(findDraggableNodeAtCoords).not.toHaveBeenCalled()
+		})
+
+		it("cancels a pending touch when the plugin is destroyed", async ({
+			expect,
+		}) => {
+			const pluginKey = new PluginKey("longPressCleanup")
+			const { editor, onNodeHold } = setup({ pluginKey })
+			touchDown(editor.view.dom)
+
+			editor.unregisterPlugin(pluginKey)
+			await vi.advanceTimersByTimeAsync(300)
+
+			expect.soft(onNodeHold).not.toHaveBeenCalled()
+			expect.soft(findDraggableNodeAtCoords).not.toHaveBeenCalled()
+		})
+
+		// a dragstart listener ahead of the plugin's refuses every drag, the
+		// way read mode does
+		function refuseDrags() {
+			const refuse = vi.fn((e: Event) => {
+				e.preventDefault()
+			})
+			document.addEventListener("dragstart", refuse, { capture: true })
+			cleanups.push(() => {
+				document.removeEventListener("dragstart", refuse, { capture: true })
+			})
+
+			return refuse
+		}
 	})
 
 	describe("dragstart", () => {
@@ -889,6 +1241,31 @@ describe("DragHandlePlugin", { concurrent: false }, () => {
 
 			expect(element.style.visibility).toBe("")
 			expect(element.parentElement?.children).toHaveLength(1)
+		})
+
+		it("forgets a drag that ends without a drop", ({ expect }) => {
+			const { editor, element, handle } = setup()
+			hover(editor, handle.plugin, 0)
+			startDrag(element)
+			expect(editor.view.dragging).not.toBeNull()
+
+			endDrag(element)
+
+			expect(editor.view.dragging).toBeNull()
+		})
+
+		it("leaves the handle alone when the editor is destroyed before the drag settles", ({
+			expect,
+		}) => {
+			const { editor, element, handle } = setup()
+			hover(editor, handle.plugin, 0)
+			vi.mocked(findDraggableNodeAtCoords).mockClear()
+			endDrag(element)
+
+			editor.destroy()
+			vi.advanceTimersByTime(20)
+
+			expect(findDraggableNodeAtCoords).not.toHaveBeenCalled()
 		})
 	})
 
@@ -1754,3 +2131,29 @@ describe("DragHandlePlugin", { concurrent: false }, () => {
 		})
 	})
 })
+
+function touchDown(target: EventTarget, clientX = 0, clientY = 0) {
+	target.dispatchEvent(touchPointer("pointerdown", clientX, clientY))
+}
+
+// holds the first paragraph until its menu opens, the handle placed on it
+async function holdFirstBlock(editor: Editor) {
+	const dom = editor.view.nodeDOM(0) as HTMLElement
+	vi.mocked(findDraggableNodeAtCoords).mockReturnValue({
+		node: must(editor.state.doc.firstChild, "paragraph"),
+		pos: 0,
+		depth: 1,
+		dom,
+	})
+	touchDown(dom, 20, 30)
+	await vi.advanceTimersByTimeAsync(300)
+}
+
+function touchAt(
+	target: EventTarget,
+	type: string,
+	clientX: number,
+	clientY: number,
+) {
+	target.dispatchEvent(touchPointer(type, clientX, clientY))
+}

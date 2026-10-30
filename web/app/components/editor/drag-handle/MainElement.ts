@@ -50,6 +50,21 @@ export const DragHandle = defineComponent({
 			default: null,
 		},
 
+		onNodeHold: {
+			type: Function as PropType<() => void>,
+			default: null,
+		},
+
+		onNodeLongPress: {
+			type: Function as PropType<() => void>,
+			default: null,
+		},
+
+		onNodeHoldEnd: {
+			type: Function as PropType<() => void>,
+			default: null,
+		},
+
 		onDragCancel: {
 			type: Function as PropType<() => void>,
 			default: null,
@@ -70,7 +85,16 @@ export const DragHandle = defineComponent({
 		const root = ref<HTMLElement | null>(null)
 
 		onMounted(() => {
-			const { editor, pluginKey, onNodeChange, onDragCancel, provider } = props
+			const {
+				editor,
+				pluginKey,
+				onNodeChange,
+				onNodeHold,
+				onNodeLongPress,
+				onNodeHoldEnd,
+				onDragCancel,
+				provider,
+			} = props
 
 			editor.registerPlugin(
 				DragHandlePlugin({
@@ -80,6 +104,9 @@ export const DragHandle = defineComponent({
 					pluginKey,
 					provider,
 					onNodeChange,
+					onNodeHold,
+					onNodeLongPress,
+					onNodeHoldEnd,
 					onDragCancel,
 					locked: props.locked,
 				}).plugin,

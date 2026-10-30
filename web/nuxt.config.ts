@@ -139,6 +139,10 @@ export default defineNuxtConfig({
 	app: {
 		head: {
 			title: "Oxynote", // default title (can be overridden in pages/components)
+			// iOS zooms in on focusing text smaller than 16px, as the editor's
+			// is. A maximum scale stops that while iOS still allows pinch zoom.
+			// Android takes it literally and allows no zoom at all.
+			viewport: "width=device-width, initial-scale=1, maximum-scale=1",
 			meta: [{ name: "apple-mobile-web-app-title", content: "Oxynote" }],
 			link: [
 				{
