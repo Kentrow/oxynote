@@ -28,6 +28,7 @@ const DATA_SOURCE_QUERY_KEYS = {
 		queryStrings: string[],
 		timeRange: string,
 		variableValues: Record<string, string>,
+		chartType: string,
 	) =>
 		[
 			"generic-query",
@@ -36,6 +37,7 @@ const DATA_SOURCE_QUERY_KEYS = {
 			...queryStrings,
 			timeRange,
 			variableValues,
+			chartType,
 		] as const,
 }
 
@@ -496,6 +498,7 @@ export default function () {
 					queries?.sort() ?? [],
 					params?.timeRangeKey || "",
 					params?.variableValues ?? {},
+					params?.chartType || "",
 				)
 			},
 			query: async (): Promise<GenericQueryResult[]> => {
