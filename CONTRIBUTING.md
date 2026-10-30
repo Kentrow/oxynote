@@ -11,6 +11,7 @@ real-time editing, all driven from the repository root with `make`.
 - [Tests and Lints](#tests-and-lints)
 - [Code Standards and AGENTS.md](#code-standards-and-agentsmd)
 - [Pull Requests](#pull-requests)
+- [Naming Commits and Pull Requests](#naming-commits-and-pull-requests)
 - [Adding a Data Source](#adding-a-data-source)
 - [Adding a Freshness Hook](#adding-a-freshness-hook)
 
@@ -84,12 +85,10 @@ check, the unit tests with their coverage gates, and the end-to-end tests
 against the production image. CI runs the same checks on each pull
 request, plus the end-to-end tests against the dev stack.
 
-Oxynote has over 14k unit, browser and integration tests: about 6.6k in
-the web app, 6.7k in the Go server and 600 in auth-realtime. On top of
-those, nearly 200 end-to-end tests drive a real browser through a running
-stack. Line coverage is about 90% in the web app and 93 to 99% everywhere
-else. Each component has a minimum, and CI fails a change that drops below
-it.
+Oxynote has unit, browser and integration tests in each component. On top
+of those, end-to-end tests drive a real browser through a running stack.
+Line coverage is about 90% in the web app and 93 to 99% everywhere else.
+Each component has a minimum, and CI fails a change that drops below it.
 
 The tests are what let us change things quickly. When a change breaks
 something in a part of the code you didn't touch, a test fails on your
@@ -147,6 +146,31 @@ follows the same pattern.
 - Keep to one issue per pull request, and fill in the template.
 - Report a security vulnerability privately, as [SECURITY.md](SECURITY.md)
   describes.
+
+## Naming Commits and Pull Requests
+
+A commit subject starts with a type and the component it touches, such as
+`feat(web): add tag name and color editing` or
+`fix(core): fix mysql timestamp parsing`. After the colon comes a short
+sentence in the imperative, lowercase and without a trailing period. A
+pull request title follows the same format.
+
+| Type | Used for |
+| --- | --- |
+| `feat` | a new feature or a visible change to one |
+| `fix` | a bug fix |
+| `perf` | a speedup with no change in behavior |
+| `refactor` | restructured code with no change in behavior |
+| `test` | tests only |
+| `docs` | documentation, READMEs and `AGENTS.md` files |
+| `ci` | GitHub workflows |
+| `chore` | tooling, config and other upkeep |
+| `deps` | dependency updates, mostly opened by Dependabot |
+
+The scope names the component: `web`, `core`, `auth-realtime`, `e2e`,
+`datagen`, `launcher` or `docker`. These are the same scopes Dependabot
+uses. Leave the scope out when a change spans several components, as in
+`docs: update CONTRIBUTING.md`.
 
 ## Adding a Data Source
 
