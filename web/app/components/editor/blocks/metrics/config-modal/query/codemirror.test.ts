@@ -21,7 +21,7 @@ import {
 	trimEditorWhitespace,
 	useLegendEditorExtension,
 	useQueryEditorExtension,
-} from "./editor"
+} from "./codemirror"
 
 // the promql extensions live in the CJS copies of the codemirror
 // packages (see promql.test.ts), so running them needs state and

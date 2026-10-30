@@ -4,7 +4,7 @@ import {
 	singleLineExtension,
 	trimEditorWhitespace,
 	useLegendEditorExtension,
-} from "./editor"
+} from "./codemirror"
 import CodeMirror from "vue-codemirror6"
 import { githubLight, githubDark } from "@uiw/codemirror-theme-github"
 import { minimalSetup } from "codemirror"
